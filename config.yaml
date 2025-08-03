@@ -1,0 +1,166 @@
+# Головний конфігураційний файл
+# Налаштування тут можуть бути перевизначені через змінні середовища
+# (напр. export APP_MODE="live")
+
+# Режим роботи: "backfill" (збирає історію) або "live" (слухає нові повідомлення)
+mode: "backfill"
+history_days: 7
+
+# --- Загальні налаштування обробки ---
+batch_size: 500
+concurrency: 5                # Загальна паралельність у внутрішніх процесах
+
+# --- Налаштування OpenAI для аналізу бізнес-лідів (v3 - Final) ---
+openai:
+  model: "gpt-4o-mini"
+  temperature: 0.0
+  timeout: 30
+  max_retries: 3
+  concurrency: 8
+  system_prompt: |
+    You are a business development analyst for a software agency. Your goal is to find messages where a user expresses a NEED for technical help, which our agency could fulfill as a paid service.
+
+    ## Core Logic:
+    - If the user **NEEDS** help -> It IS a lead.
+    - If the user **OFFERS** help -> It is NOT a lead.
+
+    ## GUIDELINES:
+    1.  **IDENTIFY THE NEED:** A lead exists if the user is looking for a developer, has a project, or is stuck on a technical problem (big or small).
+        - **GOOD Example (Lead):** "I am looking for a C# developer."
+        - **GOOD Example (Lead):** "We need help building a new feature."
+
+    2.  **IGNORE SELF-PROMOTION:** If the user is offering their own services, it is NOT a lead.
+        - **BAD Example (Not a Lead):** "I am a C# developer available for work."
+        - **BAD Example (Not a Lead):** "My team can help you with your project."
+
+    3.  **IGNORE COLLABORATIONS & QUESTIONS:** Do not flag requests for free collaboration or simple technical questions. A lead implies a need that requires dedicated work.
+
+    4.  **Strict JSON Output:** Your entire response MUST be a valid JSON object and nothing else.
+
+    ## JSON SCHEMA:
+    Your output must strictly follow this schema:
+    {
+      "is_lead": <boolean>,
+      "confidence": <float>,
+      "lead_type": <"direct_hire" | "project_work" | "paid_help" | "other" | "">,
+      "summary": "<A brief one-sentence summary of the user's NEED in English>"
+    }
+
+    ## SCHEMA EXPLANATION:
+    - `is_lead`: `true` if the user is expressing a NEED. `false` if they are OFFERING services.
+    - `confidence`: Score from 0.0 to 1.0. Must be 0.0 if `is_lead` is `false`.
+    - `lead_type`: Classify the need. Must be `""` (empty string) if `is_lead` is `false`.
+    - `summary`: A concise summary of the user's NEED. Must be an empty string if `is_lead` is `false`.
+
+  user_prompt_template: |
+    Analyze this message based on my instructions:
+    ---
+    {message}
+    ---
+# --- Налаштування Discord ---
+discord:
+  concurrent_channels: 3
+  batch_pause_seconds: 1
+  delay_seconds: [0.1, 0.6]
+  message_page_limit: 100
+  max_retries: 5
+  track_all_channels: true
+  channel_whitelist: []         # Додайте ID каналів сюди, якщо track_all_channels = false
+
+# --- Налаштування Google Sheets ---
+google_sheet:
+  spreadsheet_id: "14ISINuyVNeu8FBK908W6unARlFrj7fG542JIW_tK8Iw"
+  live_sheet_name: "Live"
+  backfill_sheet_name: "Previous"
+  stats_sheet_name: "Previous | Stats" # <--- ДОДАЙ ЦЕЙ РЯДОК
+  # Шлях до credentials тепер визначається в settings.py відносно кореня проєкту
+
+# --- Налаштування Redis ---
+redis:
+  ttl_days: 30
+  raw_message_ttl_seconds: 3600
+
+# --- Ключові слова для пошуку бізнес-лідів (v3 - розширена) ---
+keywords:
+  # --- Прямий попит на послуги ---
+  # Коли користувач чітко каже, що шукає когось за гроші.
+  - "looking for"
+  - "hire"
+  - "hiring"
+  - "paid"
+  - "budget"
+  - "project"
+  - "proposal"
+  - "quote"
+  - "need a dev"
+  - "find a dev"
+  - "outsource"
+  - "commercial"
+  - "contract"
+
+  # --- Опис проблеми або потреби ---
+  # Коли користувач описує проблему, для вирішення якої може знадобитися допомога.
+  - "need help"
+  - "can someone help"
+  - "struggling with"
+  - "assistance with"
+  - "stuck on"
+  - "issue with"
+  - "problem with"
+  - "any recommendations for"
+  - "guidance on"
+  - "who can"
+
+  # --- Дієслова, що вказують на роботу ---
+  # Коли користувач хоче щось створити або змінити.
+  - "build a"
+  - "create a"
+  - "develop a"
+  - "integrate"
+  - "migrate"
+  - "refactor"
+  - "optimize"
+  - "scale"
+  - "debug"
+  - "maintain"
+  - "update a"
+
+  # --- Тип виконавця ---
+  # Коли згадують, хто саме їм потрібен.
+  - "developer"
+  - "engineer"
+  - "programmer"
+  - "team"
+  - "agency"
+  - "consultant"
+  - "expert"
+  - "specialist"
+  - "architect"
+
+  # --- Тип проекту або продукту ---
+  # Коли описують, ЩО саме їм потрібно зробити.
+  - "mvp"
+  - "prototype"
+  - "startup"
+  - "platform"
+  - "app"
+  - "website"
+  - "e-commerce"
+  - "marketplace"
+  - "automation"
+  - "script"
+  - "bot"
+
+  # --- Популярні технології (для відлову специфічних запитів) ---
+  # Згадка технології разом зі словами "need help", "issue with" тощо значно підвищує релевантність.
+  - "react"
+  - "node"
+  - "python"
+  - "javascript"
+  - "typescript"
+  - "solidity"
+  - "smart contract"
+  - "web3"
+  - "aws"
+  - "docker"
+  - "database"

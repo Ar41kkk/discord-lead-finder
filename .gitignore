@@ -1,0 +1,73 @@
+# Скомпільовані/оптимізовані файли Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Файли, що генеруються C-розширеннями
+*.so
+
+# Папки дистрибуції / пакування
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Логи інсталяторів
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Звіти тестів та покриття коду
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Віртуальні оточення
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak
+venv.bak
+
+# IDE та редактори коду
+.idea/
+.vscode/
+
+# Секретні та локальні файли
+# ВАЖЛИВО: .env.*.local для локальних перевизначень
+.env.*.local
+google_creds.json
+
+# Папки з вихідними даними та логами
+logs/
+output/
+*.log
+*.xlsx
+
+# Специфічні файли ОС
+.DS_Store
+Thumbs.db
