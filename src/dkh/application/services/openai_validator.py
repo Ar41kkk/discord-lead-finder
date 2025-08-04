@@ -72,21 +72,21 @@ class OpenAIValidator:
                     content_str = response_json['choices'][0]['message']['content']
 
                     data = _OpenAIResponse.model_validate_json(content_str)
-
                     status = self._score_to_status(data.confidence, data.is_lead)
 
-                    # --- ✅ ЗМІНА ТУТ: Створюємо об'єкт Validation з усіма новими даними ---
                     return Validation(
                         status=status,
                         score=data.confidence,
-                        reason=data.summary,  # Тепер reason - це summary
-                        lead_type=data.lead_type  # А тут - тип ліда
+                        reason=data.summary,
+                        lead_type=data.lead_type
                     )
 
-                except httpx.RequestError as e:
-                    logger.warning('OpenAI API request failed', exc_info=e, attempt=attempt + 1)
+                # --- ✅ ОНОВЛЕНА ЛОГІКА ТУТ ---
+                # Тепер ми "ловимо" всі помилки, пов'язані з HTTP-запитами
+                except (httpx.RequestError, httpx.HTTPStatusError) as e:
+                    logger.warning('OpenAI API request failed', exc_info=True, attempt=attempt + 1)
                 except (ValidationError, json.JSONDecodeError, KeyError, IndexError) as e:
-                    logger.error('Failed to parse/validate OpenAI response', exc_info=e, attempt=attempt + 1)
+                    logger.error('Failed to parse/validate OpenAI response', exc_info=True, attempt=attempt + 1)
 
                 if attempt < self._config.max_retries - 1:
                     delay = self._base_backoff * (2 ** attempt) + random.uniform(0, 0.1)

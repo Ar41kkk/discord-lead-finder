@@ -1,12 +1,11 @@
 # src/dkh/application/message_pipeline.py
 import asyncio
-from typing import List, Optional
+from typing import Optional
 import httpx
 import structlog
 
 from dkh.config import settings
 from dkh.domain.models import Message, ValidationStatus
-from dkh.domain.ports import OpportunitySink, SeenMessageStore
 from .services.message_filter import MessageFilter
 from .services.openai_validator import OpenAIValidator
 from .services.message_recorder import MessageRecorder
@@ -17,77 +16,56 @@ logger = structlog.get_logger(__name__)
 
 class MessagePipeline:
     """
-    Orchestrates the entire message processing flow.
-    Manages dependencies and resources like the HTTP client.
+    Керує повним циклом обробки повідомлення.
+    Тепер приймає 'recorder' як залежність.
     """
 
-    def __init__(self, sinks: List[OpportunitySink], store: SeenMessageStore, stats_tracker: Optional[StatsTracker]):
-        self._store = store
-        # ✅ FIX HERE: Store the stats_tracker if it's provided
+    def __init__(self, recorder: MessageRecorder, stats_tracker: Optional[StatsTracker]):
+        """
+        Конструктор тепер приймає готовий 'recorder', а не створює його.
+        """
+        self._recorder = recorder
         self._stats_tracker = stats_tracker
+
+        # Ініціалізація інших залежностей залишається без змін
         self._http_client = httpx.AsyncClient()
         self._openai_semaphore = asyncio.Semaphore(settings.openai.concurrency)
         self._validator = OpenAIValidator(
             client=self._http_client, semaphore=self._openai_semaphore
         )
         self._filter = MessageFilter(settings.keywords)
-        self._recorder = MessageRecorder(sinks=sinks, store=self._store)
-        # This is now a simple fallback for live mode
-        self._internal_stats = {"processed": 0, "filtered": 0, "opportunities": 0}
 
-    async def process_message(self, message: Message, bot_id: str) -> None:
+    async def process_message(self, message: Message, bot_id: str, source_mode: str) -> None:
         """
-        The main method that guides a message through the entire pipeline.
+        Основний метод, який проводить повідомлення через весь конвеєр.
+        Тепер він не залежить від 'store' і передає 'source_mode' далі.
         """
         logger.debug("Processing message", msg_id=message.message_id)
 
-        # Use the detailed tracker if available (in backfill mode)
-        if self._stats_tracker:
-            # The tracker itself will handle the counting
-            pass
-        else:
-            self._internal_stats["processed"] += 1
-
-        if not await self._store.is_new(bot_id, message.channel_id, message.message_id):
-            return
-
+        # Перевірка на ключові слова
         if not self._filter.is_relevant(message):
-            if not self._stats_tracker:
-                self._internal_stats["filtered"] += 1
             return
 
+        # Валідація через OpenAI
         validation = await self._validator.validate(message)
-        logger.debug(
-            "Validation result",
-            msg_id=message.message_id,
-            status=validation.status.name,
-            score=validation.score
-        )
+        if validation.status == ValidationStatus.ERROR:
+            logger.error("OpenAI validation failed, skipping record", msg_id=message.message_id)
+            return
 
-        # If a stats tracker exists, record the result
-        if self._stats_tracker and validation.status != ValidationStatus.ERROR:
+        # Оновлення статистики, якщо трекер існує (в режимі backfill)
+        if self._stats_tracker:
             self._stats_tracker.track(message, validation)
 
-        # Record the opportunity if it's valid
-        if validation.status != ValidationStatus.ERROR:
-            is_opportunity = validation.status in {ValidationStatus.RELEVANT, ValidationStatus.HIGH_MAYBE}
-            if is_opportunity:
-                if not self._stats_tracker:
-                    self._internal_stats["opportunities"] += 1
-
-            await self._recorder.record(bot_id, message, validation)
-            logger.debug("Validation result recorded", msg_id=message.message_id, status=validation.status.name)
-        else:
-            logger.error("OpenAI validation failed, skipping record", msg_id=message.message_id)
-            await self._store.mark_as_processed(
-                bot_id, message.channel_id, [message.message_id]
-            )
-
-    def get_stats(self) -> dict:
-        """Returns the simple stats for live mode."""
-        return self._internal_stats
+        # Передача даних на збереження в MessageRecorder
+        # База даних сама впорається з дублікатами.
+        await self._recorder.record(
+            bot_id=bot_id,
+            message=message,
+            validation=validation,
+            source_mode=source_mode,
+        )
 
     async def close(self) -> None:
-        """Gracefully closes resources used by the pipeline."""
+        """Закриває ресурси, що використовуються пайплайном."""
         await self._http_client.aclose()
         logger.info("MessagePipeline resources closed.")

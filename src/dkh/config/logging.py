@@ -17,25 +17,23 @@ def configure_logging() -> None:
     log_file_path = settings.log_dir / settings.log_file
     settings.log_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- Спільні процесори для всіх логерів ---
     shared_processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
-        structlog.processors.TimeStamper(fmt='iso'),  # Універсальний формат часу
+        structlog.processors.TimeStamper(fmt='iso'),
         structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
+        # Примітка: format_exc_info прибираємо, щоб уникнути UserWarning,
+        # ConsoleRenderer і JSONRenderer обробляють винятки самі.
         structlog.processors.UnicodeDecoder(),
     ]
 
-    # --- Налаштування для стандартного logging ---
     logging.basicConfig(
         level=log_level,
         handlers=[logging.NullHandler()],
         force=True,
     )
 
-    # --- Конфігурація structlog ---
     structlog.configure(
         processors=[
             *shared_processors,
@@ -46,9 +44,9 @@ def configure_logging() -> None:
         cache_logger_on_first_use=True,
     )
 
-    # --- Створення та налаштування хендлерів ---
     console_handler = logging.StreamHandler(sys.stdout)
-    console_renderer = structlog.dev.ConsoleRenderer(colors=True)
+    # кольори та автоматична обробка винятків
+    console_renderer = structlog.dev.ConsoleRenderer(colors=True, exception_formatter=structlog.dev.plain_traceback)
     console_formatter = structlog.stdlib.ProcessorFormatter(
         processor=console_renderer,
         foreign_pre_chain=shared_processors,
@@ -68,19 +66,20 @@ def configure_logging() -> None:
     )
     file_handler.setFormatter(file_formatter)
 
-    # --- Додавання хендлерів до кореневого логера ---
     root_logger = logging.getLogger()
     root_logger.handlers = [console_handler, file_handler]
     root_logger.setLevel(log_level)
 
-    # --- Налаштування рівнів логування для сторонніх бібліотек ---
-    logging.getLogger('discord.http').setLevel(logging.WARNING)
-    logging.getLogger('httpx').setLevel(logging.WARNING)
-    # ✅ **ОСНОВНА ЗМІНА ТУТ**
-    # Ми "заглушили" надокучливий логер, встановивши його рівень на ERROR.
-    # Тепер він буде показувати тільки справжні помилки.
+    # --- ✅ ОСНОВНА ЗМІНА ТУТ ---
+    # Встановлюємо рівень ERROR для всіх компонентів discord, щоб приховати
+    # попередження про ліміти запитів та інші некритичні повідомлення.
+    # Тепер ти будеш бачити тільки справжні помилки від бібліотеки.
+    logging.getLogger('discord').setLevel(logging.ERROR)
+    logging.getLogger('discord.http').setLevel(logging.ERROR)
     logging.getLogger('discord.state').setLevel(logging.ERROR)
-    logging.getLogger('discord').setLevel(logging.INFO)
+
+    # Інші бібліотеки можна залишити на WARNING
+    logging.getLogger('httpx').setLevel(logging.WARNING)
 
     logger = structlog.get_logger(__name__)
     logger.info('✅ Logging configured successfully', log_level=settings.log_level)

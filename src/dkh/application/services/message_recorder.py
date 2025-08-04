@@ -3,38 +3,60 @@ import asyncio
 from typing import List
 import structlog
 
-from dkh.domain.models import Message, Validation, MessageOpportunity  # <--- ДОДАНО MessageOpportunity
-from dkh.domain.ports import OpportunitySink, SeenMessageStore
+from dkh.config import settings  # <--- Імпортуємо налаштування
+from dkh.database.storage import DatabaseStorage
+from dkh.domain.models import Message, Validation, MessageOpportunity, ValidationStatus
+from dkh.domain.ports import OpportunitySink
 
 logger = structlog.get_logger(__name__)
 
 
 class MessageRecorder:
     """
-    Відповідає за фіналізацію обробки: збереження можливостей
-    та позначку про те, що повідомлення було оброблене.
+    Відповідає за фіналізацію обробки: збереження можливостей.
+    Спочатку зберігає в БД, а потім в інші джерела (sinks) з урахуванням режиму.
     """
 
-    def __init__(self, sinks: List[OpportunitySink], store: SeenMessageStore):
+    def __init__(self, db_storage: DatabaseStorage, sinks: List[OpportunitySink]):
+        self._db = db_storage
         self._sinks = sinks
-        self._store = store
 
-    async def record(self, bot_id: str, message: Message, validation: Validation):
+    async def record(self, bot_id: str, message: Message, validation: Validation, source_mode: str):
         """
-        Зберігає успішно валідоване повідомлення та позначає його як оброблене.
+        Зберігає успішно валідоване повідомлення.
         """
-        if not self._sinks:
-            logger.warning('No sinks configured. Cannot record opportunity.')
-            return
-
-        # --- ✅ ВИПРАВЛЕННЯ ТУТ ---
-        # Створюємо правильний об'єкт MessageOpportunity замість словника
         opportunity = MessageOpportunity(message=message, validation=validation)
 
-        # Створюємо завдання для збереження в усі приймачі (Google, Excel, ...)
-        save_tasks = [sink.save([opportunity]) for sink in self._sinks]
+        # Крок 1: Завжди зберігаємо в базу даних
+        saved_record = await self._db.save_opportunity(
+            message_data=opportunity.message,
+            validation_data=opportunity.validation,
+            source_mode=source_mode,
+        )
 
-        # Паралельно виконуємо всі завдання на збереження
+        if not saved_record:
+            # Запис вже існує в базі, нічого більше не робимо.
+            return
+
+        # --- ✅ НОВА ЛОГІКА ТУТ ---
+        # Крок 2: Перевіряємо, чи потрібно записувати в Google Sheets
+        write_mode = settings.google_sheet.write_mode
+        if write_mode == 'qualified':
+            # У режимі "qualified" перевіряємо статус
+            is_qualified = validation.status in {ValidationStatus.RELEVANT, ValidationStatus.HIGH_MAYBE}
+            if not is_qualified:
+                logger.debug(
+                    "Skipping Google Sheet write for non-qualified lead",
+                    url=opportunity.message.jump_url,
+                    status=validation.status.name
+                )
+                return  # Не записуємо в Google Sheets
+
+        # Крок 3: Якщо перевірка пройдена (або режим "all"), зберігаємо в sinks
+        if not self._sinks:
+            return
+
+        save_tasks = [sink.save([opportunity]) for sink in self._sinks]
         results = await asyncio.gather(*save_tasks, return_exceptions=True)
 
         for sink, result in zip(self._sinks, results):
@@ -45,8 +67,3 @@ class MessageRecorder:
                     msg_id=message.message_id,
                     error=result,
                 )
-
-        # Позначаємо повідомлення як оброблене, щоб не перевіряти його знову
-        await self._store.mark_as_processed(
-            bot_id, message.channel_id, [message.message_id]
-        )

@@ -9,11 +9,11 @@ import structlog
 from discord.utils import snowflake_time
 from tqdm.asyncio import tqdm
 
+from dkh.database.storage import DatabaseStorage
 from dkh.application.message_pipeline import MessagePipeline
 from dkh.application.utils import SimpleGlobalRateLimiter
 from dkh.config import settings
 from dkh.domain.models import Message
-from dkh.application.services.stats_tracker import StatsTracker
 
 logger = structlog.get_logger(__name__)
 
@@ -21,8 +21,7 @@ logger = structlog.get_logger(__name__)
 class BackfillService:
     """
     Виконує збір та обробку історії повідомлень з каналів.
-    Твоя унікальна логіка збору та ітерації збережена, але інтегрована
-    з новою архітектурою для обробки повідомлень.
+    Обробка відбувається паралельно зі збором даних для максимальної швидкості.
     """
 
     def __init__(
@@ -30,26 +29,18 @@ class BackfillService:
             client: discord.Client,
             pipeline: MessagePipeline,
             rate_limiter: SimpleGlobalRateLimiter,
-            stats_tracker: StatsTracker,
+            db_storage: DatabaseStorage,
     ):
         self.client = client
         self.pipeline = pipeline
         self.rate_limiter = rate_limiter
-        self.stats_tracker = stats_tracker
+        self.db = db_storage
         self._channel_semaphore = asyncio.Semaphore(settings.discord.concurrent_channels)
 
     def _to_domain_message(self, msg: discord.Message) -> Optional[Message]:
-        """
-        Допоміжний метод для конвертації discord.Message в нашу внутрішню модель.
-        Це дозволяє основній частині коду бути незалежною від бібліотеки Discord.
-        """
         if not msg.content:
             return None
-
         keyword = self.pipeline._filter.find_keyword(msg.content)
-        if not keyword:
-            return None
-
         return Message(
             message_id=msg.id,
             channel_id=msg.channel.id,
@@ -65,7 +56,6 @@ class BackfillService:
         )
 
     async def run(self):
-        """Головний метод запуску процесу backfill."""
         bot_id = str(self.client.user.id)
         logger.info("Backfill process started.")
 
@@ -76,16 +66,13 @@ class BackfillService:
             logger.warning("No active channels found for backfill. Exiting.")
             return
 
+        # --- ✅ ОНОВЛЕНА ЛОГІКА ТУТ ---
+        # Повертаємо оригінальний, швидший підхід з паралельною обробкою
         await self._process_channels_history(bot_id, active_channels, cutoff_time)
 
-        await self._write_stats_to_sheet()
-        logger.info("Backfill process finished.")
+        logger.info("Backfill process finished. Data saved to the database.")
 
     def _discover_active_channels(self, cutoff: datetime) -> List[discord.TextChannel]:
-        """
-        Знаходить активні канали.
-        ✅ ТВОЯ ЛОГІКА ПОВНІСТЮ ЗБЕРЕЖЕНА.
-        """
         active = []
         logger.info("Discovering active channels...")
         for guild in self.client.guilds:
@@ -103,19 +90,21 @@ class BackfillService:
         return active
 
     async def _process_channels_history(
-            self, bot_id: str, channels: List[discord.TextChannel], after_time: datetime
+            self, bot_id: str, channels: List[discord.TextChannel], default_after_time: datetime
     ):
         """
-        Обробляє історію каналів, використовуючи новий централізований пайплайн.
+        Обробляє історію каналів, запускаючи збір та обробку паралельно.
         """
-
         async def worker(channel: discord.TextChannel):
-            """Збирає історію одного каналу та передає кожне повідомлення в пайплайн."""
+            """Збирає історію ОДНОГО каналу та одразу передає кожне повідомлення на обробку."""
             async with self._channel_semaphore:
-                messages = await self._fetch_single_channel_history(channel, after_time)
+                last_seen_timestamp = await self.db.get_latest_message_timestamp(channel.id)
+                start_time = last_seen_timestamp or default_after_time
+
+                messages = await self._fetch_single_channel_history(channel, start_time)
                 for msg in messages:
                     if domain_message := self._to_domain_message(msg):
-                        await self.pipeline.process_message(domain_message, bot_id)
+                        await self.pipeline.process_message(domain_message, bot_id, "backfill")
 
         tasks = [worker(ch) for ch in channels]
         for f in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc="Processing Channels"):
@@ -127,12 +116,8 @@ class BackfillService:
     async def _fetch_single_channel_history(
             self, channel: discord.TextChannel, after_time: datetime
     ) -> List[discord.Message]:
-        """
-        Збирає історію повідомлень з одного каналу.
-        ✅ ТВОЯ ЛОГІКА ПОВНІСТЮ ЗБЕРЕЖЕНА, з виправленням обробки помилок.
-        """
         all_messages, last_id, retries = [], None, 0
-        naive_after_time = after_time.replace(tzinfo=None)
+        naive_after_time = after_time.replace(tzinfo=None) if after_time.tzinfo else after_time
 
         while True:
             try:
@@ -151,17 +136,10 @@ class BackfillService:
                 logger.warning("Permission denied, skipping channel", channel=channel.name)
                 break
             except discord.HTTPException as e:
-                # ✅ ОСНОВНЕ ВИПРАВЛЕННЯ ТУТ
                 if e.status == 429:
                     retries += 1
-                    # Надійно отримуємо час очікування. Якщо його немає, чекаємо 5 секунд.
                     retry_after = getattr(e, 'retry_after', 5.0)
-                    logger.warning(
-                        "Rate limit hit, backing off",
-                        retry_after=round(retry_after, 2),
-                        retries=retries,
-                    )
-                    # Чекаємо вказаний час + 1 секунду про всяк випадок
+                    logger.warning("Rate limit hit, backing off", retry_after=round(retry_after, 2), retries=retries)
                     await asyncio.sleep(retry_after + 1.0)
                     if retries >= settings.discord.max_retries:
                         logger.error("Max retries exceeded for rate limit", channel=channel.name)
@@ -173,44 +151,3 @@ class BackfillService:
                 logger.exception("Unexpected error fetching history", channel_name=channel.name)
                 break
         return all_messages
-
-    async def _write_stats_to_sheet(self):
-        """Форматує та записує зібрану статистику в Google Sheets."""
-        logger.info("Writing stats to Google Sheet...")
-        try:
-            # Готуємо дані по серверах
-            server_data = []
-            for name, data in sorted(self.stats_tracker.server_stats.items()):
-                server_data.append([name, data.get('keyword_hits', 0), data.get('openai_success', 0)])
-
-            # Готуємо дані по ключових словах
-            keyword_data = []
-            for name, data in sorted(self.stats_tracker.keyword_stats.items()):
-                keyword_data.append([name, data.get('mentions', 0), data.get('openai_success', 0)])
-
-            # Комбінуємо дані в одну таблицю
-            header = ["Server Name", "Keyword Number", "OpenAI Number", "", "Keyword", "Mentions", "OpenAI Number"]
-            final_rows = [header]
-
-            num_rows = max(len(server_data), len(keyword_data))
-            for i in range(num_rows):
-                s_row = server_data[i] if i < len(server_data) else ["", "", ""]
-                k_row = keyword_data[i] if i < len(keyword_data) else ["", "", ""]
-                final_rows.append(s_row + [""] + k_row)
-
-            # Записуємо в Google Sheet
-            config = settings.google_sheet
-            gc = gspread.service_account(filename=str(config.credentials_path))
-            spreadsheet = gc.open_by_key(config.spreadsheet_id)
-
-            try:
-                stats_sheet = spreadsheet.worksheet(config.stats_sheet_name)
-                stats_sheet.clear()
-            except gspread.WorksheetNotFound:
-                stats_sheet = spreadsheet.add_worksheet(title=config.stats_sheet_name, rows="1000", cols="10")
-
-            stats_sheet.update(final_rows, 'A1')
-            logger.info("Successfully wrote stats to sheet.", sheet_name=config.stats_sheet_name)
-
-        except Exception:
-            logger.exception("Failed to write stats to Google Sheet.")

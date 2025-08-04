@@ -1,27 +1,27 @@
+# src/dkh/config/settings.py
 from pathlib import Path
-from typing import List, Literal, Tuple
+from typing import List, Literal, Tuple, Dict
 
 import yaml
 from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# --- Визначення шляхів ---
-# BASE_DIR - корінь проєкту (папка, де лежить 'discord_listener')
-# Якщо структура `discord_listener/src/dkh/config/settings.py`, то parents[4]
 BASE_DIR = Path(__file__).resolve().parents[3]
 CONFIG_FILE = BASE_DIR / 'config.yaml'
 
 
-# --- Функція-завантажувач для Pydantic ---
 def yaml_config_settings_source() -> dict:
-    """Завантажує налаштування з YAML, щоб Pydantic міг їх використати."""
     if not CONFIG_FILE.is_file():
         return {}
     with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
         return yaml.safe_load(f) or {}
 
 
-# --- Вкладені моделі для кращої структури ---
+# --- Вкладені моделі ---
+class DatabaseSettings(BaseModel):
+    db_url: str = "sqlite://db.sqlite3"
+
+
 class OpenAISettings(BaseModel):
     model: str = 'gpt-4o-mini'
     temperature: float = 0.0
@@ -46,52 +46,42 @@ class GoogleSheetSettings(BaseModel):
     spreadsheet_id: str
     live_sheet_name: str = 'Live'
     backfill_sheet_name: str = 'Previous'
-    stats_sheet_name: str = 'Previous | Stats' # <--- ДОДАЙ ЦЕЙ РЯДОК
+    stats_sheet_name: str = 'Stats'
+    leads_sheet_name: str = 'Leads'
+    credentials_path: Path = BASE_DIR / 'google_creds.json'
+    # Нове поле для режиму запису
+    write_mode: Literal['all', 'qualified'] = 'all'
     credentials_path: Path = BASE_DIR / 'google_creds.json'
 
 
-class RedisSettings(BaseModel):
-    ttl_days: int = 30
-    raw_message_ttl_seconds: int = 3600
-
-    @property
-    def message_seen_ttl_seconds(self) -> int:
-        """Перетворює дні в секунди для TTL ключів оброблених повідомлень."""
-        return self.ttl_days * 24 * 3600
+class ExportSettings(BaseModel):
+    status_map: Dict[str, str] = Field(default_factory=dict)
+    lead_type_map: Dict[str, str] = Field(default_factory=dict)
+    default_header: List[str] = Field(default_factory=list)
 
 
 # --- Головна модель налаштувань ---
 class Settings(BaseSettings):
-    """
-    Головна модель конфігурації.
-    Завантажує налаштування з YAML, .env файлів та змінних середовища.
-    Пріоритет: Змінні середовища > .env > YAML > Значення за замовчуванням.
-    """
-
-    # Секрети (з .env або змінних середовища)
+    # Секрети
     discord_token: SecretStr = Field(..., description='Токен Discord бота')
     openai_api_key: SecretStr = Field(..., description='Ключ до OpenAI API')
-    redis_url: SecretStr = Field(
-        'redis://localhost:6379/0', description='URL для підключення до Redis'
-    )
 
     # Головні налаштування
-    mode: Literal['backfill', 'live'] = 'live'
+    mode: Literal['backfill', 'live', 'stats', 'sync', 'export'] = 'live'
     history_days: int = 7
-    batch_size: int = 500
-    concurrency: int = 5
     keywords: List[str] = Field(default_factory=list)
 
     # Налаштування логування
     log_level: Literal['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'] = 'INFO'
-    log_dir: Path = BASE_DIR / 'logs'  # Перемістив з config.yaml для надійності
+    log_dir: Path = BASE_DIR / 'logs'
     log_file: str = 'app.log'
 
     # Вкладені налаштування
+    database: DatabaseSettings
     openai: OpenAISettings
     discord: DiscordSettings
     google_sheet: GoogleSheetSettings
-    redis: RedisSettings
+    export: ExportSettings
 
     # Конфігурація Pydantic-Settings
     model_config = SettingsConfigDict(
@@ -99,23 +89,31 @@ class Settings(BaseSettings):
         case_sensitive=False,
         env_file=BASE_DIR / '.env',
         env_file_encoding='utf-8',
-        extra='ignore'  # <--- ДОДАЙ ЦЕЙ РЯДОК
+        extra='ignore'
     )
 
     @classmethod
     def settings_customise_sources(
-        cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings
+            cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings
     ):
-        # Визначаємо порядок джерел: YAML має найнижчий пріоритет
         return (
             init_settings,
             dotenv_settings,
             env_settings,
             file_secret_settings,
-            yaml_config_settings_source,  # Наш завантажувач YAML
-
+            yaml_config_settings_source,
         )
 
 
-# Створюємо єдиний екземпляр налаштувань для всього проєкту
 settings = Settings()
+
+# --- Конфігурація для Tortoise-ORM, що генерується "на льоту" ---
+TORTOISE_CONFIG = {
+    "connections": {"default": settings.database.db_url},
+    "apps": {
+        "models": {
+            "models": ["dkh.database.models"],
+            "default_connection": "default",
+        },
+    },
+}
