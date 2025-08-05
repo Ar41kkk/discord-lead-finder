@@ -35,6 +35,13 @@ def bootstrap_live_pipeline() -> MessagePipeline:
 def bootstrap_backfill_service(client: discord.Client) -> BackfillService:
     """Створює сервіс для режиму 'backfill' з інтеграцією бази даних."""
     logger.info("Bootstrapping BACKFILL mode service...")
+
+    # --- ✅ ОНОВЛЕНО ---
+    # Sinks (включаючи Google Sheets) більше не потрібні на етапі ініціалізації.
+    # BackfillService тепер сам керує фінальним збереженням.
+    db_storage = DatabaseStorage()
+
+    # Створюємо sinks тут, щоб передати їх в рекордер для фінального запису
     sinks = []
     try:
         worksheet_name = settings.google_sheet.backfill_sheet_name
@@ -43,11 +50,14 @@ def bootstrap_backfill_service(client: discord.Client) -> BackfillService:
     except Exception as e:
         logger.error("Failed to initialize Google Sheets sink for backfill mode", error=e)
 
-    db_storage = DatabaseStorage()
+    # Рекордер все ще потрібен для доступу до методу record_batch
     recorder = MessageRecorder(db_storage=db_storage, sinks=sinks)
-
     pipeline = MessagePipeline(recorder=recorder)
-    rate_limiter = SimpleGlobalRateLimiter(interval=0.1)
+
+    # --- ✅ ОНОВЛЕНО ---
+    # rate_limiter тепер можна налаштувати через config.yaml
+    # Використовуємо `batch_pause_seconds` для інтервалу
+    rate_limiter = SimpleGlobalRateLimiter(interval=settings.discord.batch_pause_seconds)
 
     backfill_service = BackfillService(
         client=client,

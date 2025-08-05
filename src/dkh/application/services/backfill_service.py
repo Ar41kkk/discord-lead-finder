@@ -13,7 +13,7 @@ from dkh.database.storage import DatabaseStorage
 from dkh.application.message_pipeline import MessagePipeline
 from dkh.application.utils import SimpleGlobalRateLimiter
 from dkh.config import settings
-from dkh.domain.models import Message
+from dkh.domain.models import Message, MessageOpportunity
 
 logger = structlog.get_logger(__name__)
 
@@ -21,7 +21,8 @@ logger = structlog.get_logger(__name__)
 class BackfillService:
     """
     Виконує збір та обробку історії повідомлень з каналів.
-    Використовує потокову (streaming) модель для максимальної швидкості.
+    Тепер сервіс спочатку збирає всі потенційні можливості в пам'ять,
+    а потім зберігає їх усі разом в кінці однією великою транзакцією.
     """
 
     def __init__(
@@ -40,7 +41,6 @@ class BackfillService:
     def _to_domain_message(self, msg: discord.Message) -> Optional[Message]:
         if not msg.content:
             return None
-        # Ключове слово тепер визначається всередині MessagePipeline
         return Message(
             message_id=msg.id,
             channel_id=msg.channel.id,
@@ -66,9 +66,16 @@ class BackfillService:
             logger.warning("No active channels found for backfill. Exiting.")
             return
 
-        await self._process_channels_history(bot_id, active_channels, cutoff_time)
+        all_opportunities = await self._process_channels_history(bot_id, active_channels, cutoff_time)
 
-        logger.info("Backfill process finished. Data saved to the database.")
+        if all_opportunities:
+            logger.info(f"Collected {len(all_opportunities)} total opportunities. Saving them now...")
+            await self.pipeline.recorder.record_batch(all_opportunities, "backfill")
+            logger.info("All opportunities have been saved.")
+        else:
+            logger.info("No new opportunities found during this backfill run.")
+
+        logger.info("Backfill process finished.")
 
     def _discover_active_channels(self, cutoff: datetime) -> List[discord.TextChannel]:
         active = []
@@ -89,53 +96,64 @@ class BackfillService:
 
     async def _process_channels_history(
             self, bot_id: str, channels: List[discord.TextChannel], default_after_time: datetime
-    ):
-        """Запускає паралельну обробку каналів."""
+    ) -> List[MessageOpportunity]:
+        """
+        Запускає паралельну обробку каналів і повертає єдиний список всіх знайдених можливостей.
+        """
         tasks = [
             self._stream_and_process_channel(channel, bot_id, default_after_time)
             for channel in channels
         ]
+
+        all_opportunities = []
         for f in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc="Processing Channels"):
             try:
-                await f
+                channel_opportunities = await f
+                if channel_opportunities:
+                    all_opportunities.extend(channel_opportunities)
             except Exception:
                 logger.exception("Error processing channel task")
 
+        return all_opportunities
+
+    # --- ✅ ВИПРАВЛЕНО ---
     async def _stream_and_process_channel(
             self, channel: discord.TextChannel, bot_id: str, default_after_time: datetime
-    ):
+    ) -> List[MessageOpportunity]:
         """
         Створює потоковий конвеєр для одного каналу:
-        Читає -> Фільтрує -> Групує в пакети -> Обробляє паралельно.
+        Читає -> Фільтрує -> Валідує -> Повертає список знайдених можливостей.
         """
         async with self._channel_semaphore:
             last_seen_timestamp = await self.db.get_latest_message_timestamp(channel.id)
             start_time = last_seen_timestamp or default_after_time
 
-            processing_tasks = []
-            batch_size = 10  # Розмір пакету для паралельної обробки
+            all_tasks_for_channel = []
 
             async for msg in self._stream_channel_history(channel, start_time):
                 if domain_message := self._to_domain_message(msg):
-                    task = self.pipeline.process_message(domain_message, bot_id, "backfill")
-                    processing_tasks.append(task)
+                    task = asyncio.create_task(
+                        self.pipeline.validate_and_get_opportunity(domain_message)
+                    )
+                    all_tasks_for_channel.append(task)
 
-                # Коли пакет наповнився, обробляємо його і очищуємо список
-                if len(processing_tasks) >= batch_size:
-                    await asyncio.gather(*processing_tasks)
-                    processing_tasks = []
+            if not all_tasks_for_channel:
+                return []
 
-            # Обробляємо залишок, якщо він є
-            if processing_tasks:
-                await asyncio.gather(*processing_tasks)
+            # Виконуємо всі створені завдання для цього каналу
+            results = await asyncio.gather(*all_tasks_for_channel, return_exceptions=True)
+
+            # Збираємо лише успішні результати (не None і не помилки)
+            validated_opportunities = [
+                res for res in results
+                if res is not None and not isinstance(res, Exception)
+            ]
+
+            return validated_opportunities
 
     async def _stream_channel_history(
             self, channel: discord.TextChannel, after_time: datetime
     ) -> AsyncGenerator[discord.Message, None]:
-        """
-        Асинхронний генератор, який завантажує та 'віддає' повідомлення
-        по одному, не чекаючи завантаження всієї історії.
-        """
         last_id, retries = None, 0
         naive_after_time = after_time.replace(tzinfo=None) if after_time.tzinfo else after_time
 

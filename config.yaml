@@ -4,17 +4,17 @@
 
 # Режим роботи: "backfill" (збирає історію) або "live" (слухає нові повідомлення)
 mode: "backfill"
-history_days: 1
+history_days: 7
 
 # --- Загальні налаштування обробки ---
 batch_size: 500
-concurrency: 5                # Загальна паралельність у внутрішніх процесах
 # --- ✅ НОВИЙ РОЗДІЛ ТУТ ---
 database:
   db_url: "sqlite://db.sqlite3" # Шлях до вашої бази даних
 
 # --- ✅ РОЗШИРЕНІ НАЛАШТУВАННЯ АГЕНТА ---
 openai:
+  concurrency: 5
   model: "gpt-4o-mini"
   temperature: 0.0
   timeout: 45

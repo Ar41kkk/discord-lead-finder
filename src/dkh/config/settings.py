@@ -27,7 +27,9 @@ class OpenAISettings(BaseModel):
     temperature: float = 0.0
     timeout: int = 30
     max_retries: int = 3
-    concurrency: int = 8
+    # --- ✅ ОНОВЛЕНО ---
+    # Додано поле concurrency, як у вашому config.yaml
+    concurrency: int = 5
     system_prompt: str
     user_prompt_template: str
 
@@ -49,9 +51,7 @@ class GoogleSheetSettings(BaseModel):
     stats_sheet_name: str = 'Stats'
     leads_sheet_name: str = 'Leads'
     credentials_path: Path = BASE_DIR / 'google_creds.json'
-    # Нове поле для режиму запису
     write_mode: Literal['all', 'qualified'] = 'all'
-    credentials_path: Path = BASE_DIR / 'google_creds.json'
 
 
 class ExportSettings(BaseModel):
@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     mode: Literal['backfill', 'live', 'stats', 'sync', 'export'] = 'live'
     history_days: int = 7
     keywords: List[str] = Field(default_factory=list)
+
+    # --- ✅ ОНОВЛЕНО ---
+    # Додано нові поля з вашого config.yaml
+    batch_size: int = 500
 
     # Налаштування логування
     log_level: Literal['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'] = 'INFO'
@@ -98,10 +102,12 @@ class Settings(BaseSettings):
     ):
         return (
             init_settings,
+            # --- ✅ ОНОВЛЕНО ---
+            # Завантажуємо YAML конфіг в першу чергу, щоб його могли перевизначити змінні середовища
+            yaml_config_settings_source,
             dotenv_settings,
             env_settings,
             file_secret_settings,
-            yaml_config_settings_source,
         )
 
 
