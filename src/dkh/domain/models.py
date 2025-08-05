@@ -1,8 +1,8 @@
+# src/dkh/domain/models.py
 from datetime import datetime
 from enum import Enum, auto
-from typing import Optional
-
-from pydantic import BaseModel
+from typing import Optional, List
+from pydantic import BaseModel, Field
 
 
 class ValidationStatus(Enum):
@@ -13,7 +13,6 @@ class ValidationStatus(Enum):
     LOW_MAYBE = auto()
     UNRELEVANT = auto()
     ERROR = auto()
-
 
 class Message(BaseModel):
     """
@@ -43,6 +42,7 @@ class Validation(BaseModel):
     score: float = 0.0
     reason: Optional[str] = None
     lead_type: Optional[str] = None
+    extracted_tech_stack: Optional[List[str]] = None
 
 
 class MessageOpportunity(BaseModel):

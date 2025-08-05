@@ -11,7 +11,6 @@ from dkh.config.settings import TORTOISE_CONFIG
 from dkh.infrastructure.discord.listener import Listener
 from dkh.application.services.sync_service import SyncService
 from dkh.application.services.export_service import ExportService
-from dkh.application.services.stats_generator_service import StatsGeneratorService
 
 app = typer.Typer(help="Інструмент для пошуку лідів у Discord.")
 logger = structlog.get_logger(__name__)
@@ -79,9 +78,7 @@ async def run_live_mode():
         logger.info("Database connections closed for live mode.")
 
 
-# --- ✅ ОНОВЛЕНА ЛОГІКА ТУТ ---
 class BackfillClient(discord.Client):
-    """Клієнт для режиму backfill, який сигналізує про завершення роботи."""
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._finished = asyncio.Event()
@@ -101,12 +98,10 @@ class BackfillClient(discord.Client):
             await self.close()
 
     async def close(self):
-        """Перевизначаємо метод close, щоб він подавав сигнал про завершення."""
         self._finished.set()
         await super().close()
 
     async def wait_until_finished(self):
-        """Метод, який чекає на сигнал про завершення."""
         await self._finished.wait()
 
 
@@ -115,9 +110,9 @@ async def run_backfill_mode():
     logger.info("Starting backfill client...")
     client = BackfillClient(self_bot=True)
     try:
-        # Запускаємо клієнт у фоні
         asyncio.create_task(client.start(settings.discord_token.get_secret_value()))
-        # І чекаємо, доки він не подасть сигнал про завершення
+        # --- ✅ ВИПРАВЛЕННЯ ТУТ ---
+        # Додано дужки () для правильного виклику методу
         await client.wait_until_finished()
     except KeyboardInterrupt:
         await client.close()

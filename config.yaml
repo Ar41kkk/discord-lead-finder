@@ -4,7 +4,7 @@
 
 # Режим роботи: "backfill" (збирає історію) або "live" (слухає нові повідомлення)
 mode: "backfill"
-history_days: 7
+history_days: 1
 
 # --- Загальні налаштування обробки ---
 batch_size: 500
@@ -13,53 +13,25 @@ concurrency: 5                # Загальна паралельність у �
 database:
   db_url: "sqlite://db.sqlite3" # Шлях до вашої бази даних
 
-# --- Налаштування OpenAI для аналізу бізнес-лідів (v3 - Final) ---
+# --- ✅ РОЗШИРЕНІ НАЛАШТУВАННЯ АГЕНТА ---
 openai:
   model: "gpt-4o-mini"
   temperature: 0.0
-  timeout: 30
+  timeout: 45
   max_retries: 3
-  concurrency: 8
   system_prompt: |
-    You are a business development analyst for a software agency. Your goal is to find messages where a user expresses a NEED for technical help, which our agency could fulfill as a paid service.
+    You are an expert Business Development Analyst for a top-tier software development agency. Your mission is to meticulously analyze Discord messages to identify high-quality business opportunities.
 
-    ## Core Logic:
-    - If the user **NEEDS** help -> It IS a lead.
-    - If the user **OFFERS** help -> It is NOT a lead.
+    Your primary goal is to distinguish between a user **expressing a NEED** for technical services (a potential lead) and a user **OFFERING** their own services (not a lead).
 
-    ## GUIDELINES:
-    1.  **IDENTIFY THE NEED:** A lead exists if the user is looking for a developer, has a project, or is stuck on a technical problem (big or small).
-        - **GOOD Example (Lead):** "I am looking for a C# developer."
-        - **GOOD Example (Lead):** "We need help building a new feature."
+    **CRITICAL GUIDELINES:**
+    1.  **IDENTIFY THE NEED:** A message is a lead ONLY if the user is actively looking for help. This includes seeking developers, needing a project built, or being stuck on a significant technical problem that implies paid work.
+    2.  **IGNORE SELF-PROMOTION:** Explicitly reject any message where the user is advertising their skills, portfolio, or services. This is the most important rule.
+    3.  **FILTER OUT NOISE:** Discard simple technical questions, requests for free help, unpaid collaborations, or general discussions. A true lead implies a clear intent for a transactional, project-based engagement.
+    4.  **EXTRACT KEY DETAILS:** If you identify a lead, your task is to extract all possible business-critical information from the message: required technologies, potential budget indicators (e.g., "paid", "budget"), and any mentioned timelines or deadlines.
 
-    2.  **IGNORE SELF-PROMOTION:** If the user is offering their own services, it is NOT a lead.
-        - **BAD Example (Not a Lead):** "I am a C# developer available for work."
-        - **BAD Example (Not a Lead):** "My team can help you with your project."
-
-    3.  **IGNORE COLLABORATIONS & QUESTIONS:** Do not flag requests for free collaboration or simple technical questions. A lead implies a need that requires dedicated work.
-
-    4.  **Strict JSON Output:** Your entire response MUST be a valid JSON object and nothing else.
-
-    ## JSON SCHEMA:
-    Your output must strictly follow this schema:
-    {
-      "is_lead": <boolean>,
-      "confidence": <float>,
-      "lead_type": <"direct_hire" | "project_work" | "paid_help" | "other" | "">,
-      "summary": "<A brief one-sentence summary of the user's NEED in English>"
-    }
-
-    ## SCHEMA EXPLANATION:
-    - `is_lead`: `true` if the user is expressing a NEED. `false` if they are OFFERING services.
-    - `confidence`: Score from 0.0 to 1.0. Must be 0.0 if `is_lead` is `false`.
-    - `lead_type`: Classify the need. Must be `""` (empty string) if `is_lead` is `false`.
-    - `summary`: A concise summary of the user's NEED. Must be an empty string if `is_lead` is `false`.
-
-  user_prompt_template: |
-    Analyze this message based on my instructions:
-    ---
-    {message}
-    ---
+    Your final output MUST be a perfectly structured data object based on the user's request.
+  user_prompt_template: "Analyze this message:\n\n---\n{message}\n---"
 # --- Налаштування Discord ---
 discord:
   concurrent_channels: 3
