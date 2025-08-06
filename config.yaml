@@ -4,7 +4,7 @@
 
 # Режим роботи: "backfill" (збирає історію) або "live" (слухає нові повідомлення)
 mode: "backfill"
-history_days: 1
+history_days: 7
 
 # --- Загальні налаштування обробки ---
 database:
@@ -12,7 +12,7 @@ database:
 
 # --- ✅ РОЗШИРЕНІ НАЛАШТУВАННЯ АГЕНТА ---
 openai:
-  concurrency: 5
+  concurrency: 15
   model: "gpt-4o-mini"
   temperature: 0.0
   timeout: 45
@@ -32,9 +32,9 @@ openai:
   user_prompt_template: "Analyze this message:\n\n---\n{message}\n---"
 # --- Налаштування Discord ---
 discord:
-  concurrent_channels: 3
-  batch_pause_seconds: 1
-  delay_seconds: [0.1, 0.6]
+  concurrent_channels: 8
+  batch_pause_seconds: 0.5
+  delay_seconds: [0.1, 0.3]
   message_page_limit: 100
   max_retries: 5
   track_all_channels: true
