@@ -4,8 +4,8 @@ import structlog
 from tortoise.exceptions import DoesNotExist
 from typing import Optional
 
-from dkh.config import settings
-from dkh.database.models import Opportunity
+from config import settings
+from database.models import Opportunity
 
 logger = structlog.get_logger(__name__)
 
@@ -50,40 +50,47 @@ class SyncService:
         log.info("Starting sync from Google Sheet to DB...")
 
         try:
+            # --- КРОК 1: Отримати всі дані з Google Sheets одним запитом ---
             all_records = self.worksheet.get_all_records()
             if not all_records:
                 log.warning("Google Sheet is empty. Nothing to sync.")
                 return
 
             log.info(f"Found {len(all_records)} records in Google Sheet to process.")
-            updated_count = 0
 
-            for i, row in enumerate(all_records):
-                message_url = row.get(URL_COLUMN_NAME)
-                manual_status = row.get(MANUAL_STATUS_COLUMN_NAME)
+            # Створюємо словник для швидкого доступу: {url: status}
+            urls_from_sheet = {
+                row.get(URL_COLUMN_NAME): row.get(MANUAL_STATUS_COLUMN_NAME)
+                for row in all_records
+                if row.get(URL_COLUMN_NAME) and row.get(MANUAL_STATUS_COLUMN_NAME)
+            }
 
-                row_log = log.bind(row_num=i + 2, url=message_url)
+            if not urls_from_sheet:
+                log.warning("No rows with both URL and Status found in the sheet.")
+                return
 
-                if not message_url or not manual_status:
-                    row_log.debug("Skipping row with missing URL or Manual Status.")
-                    continue
+            # --- КРОК 2: Отримати всі відповідні записи з БД одним запитом ---
+            opportunities_from_db = await Opportunity.filter(message_url__in=urls_from_sheet.keys())
 
-                try:
-                    opportunity = await Opportunity.get(message_url=message_url)
+            # Створюємо словник для швидкого доступу до об'єктів БД
+            opportunities_map = {op.message_url: op for op in opportunities_from_db}
 
-                    if opportunity.manual_status != manual_status:
-                        opportunity.manual_status = manual_status
-                        await opportunity.save()
-                        row_log.info("Updated status in DB", new_status=manual_status)
-                        updated_count += 1
+            # --- КРОК 3: Порівняти дані в пам'яті та підготувати пакет для оновлення ---
+            ops_to_update = []
+            for url, opportunity in opportunities_map.items():
+                new_status = urls_from_sheet.get(url)
+                # Перевіряємо, чи статус дійсно змінився
+                if new_status and opportunity.manual_status != new_status:
+                    opportunity.manual_status = new_status
+                    ops_to_update.append(opportunity)
+                    log.debug(f"Queued for update: {url}", new_status=new_status)
 
-                except DoesNotExist:
-                    # ✅ Змінено на debug, оскільки це очікувана ситуація
-                    row_log.debug("Opportunity not found in DB, skipping.")
-                except Exception:
-                    row_log.exception("Failed to update opportunity in DB")
+            # --- КРОК 4: Виконати оновлення одним пакетним запитом, якщо є що оновлювати ---
+            if ops_to_update:
+                await Opportunity.bulk_update(ops_to_update, fields=['manual_status'])
+                log.info("Sync finished.", updated_records=len(ops_to_update))
+            else:
+                log.info("Sync finished. No records needed an update.")
 
-            log.info("Sync finished.", updated_records=updated_count)
         except Exception:
             log.exception("An unexpected error occurred during the sync process.")
-

@@ -3,10 +3,10 @@ import asyncio
 from typing import List
 import structlog
 
-from dkh.config import settings
-from dkh.database.storage import DatabaseStorage
-from dkh.domain.models import Message, Validation, MessageOpportunity, ValidationStatus
-from dkh.domain.ports import OpportunitySink
+from config import settings
+from database.storage import DatabaseStorage
+from domain.models import Message, Validation, MessageOpportunity, ValidationStatus
+from domain.ports import OpportunitySink
 
 logger = structlog.get_logger(__name__)
 
@@ -51,7 +51,7 @@ class MessageRecorder:
         # Крок 2: Перевіряємо, чи потрібно записувати в зовнішні системи (sinks)
         write_mode = settings.google_sheet.write_mode
         if write_mode == 'qualified':
-            is_qualified = validation.status in {ValidationStatus.RELEVANT, ValidationStatus.HIGH_MAYBE}
+            is_qualified = validation.status in {ValidationStatus.RELEVANT, ValidationStatus.POSSIBLY_RELEVANT}
             if not is_qualified:
                 log.debug("Skipping sinks write for non-qualified lead.")
                 return
@@ -91,7 +91,7 @@ class MessageRecorder:
         if settings.google_sheet.write_mode == 'qualified':
             sinks_opportunities = [
                 opp for opp in opportunities
-                if opp.validation.status in {ValidationStatus.RELEVANT, ValidationStatus.HIGH_MAYBE}
+                if opp.validation.status in {ValidationStatus.RELEVANT, ValidationStatus.POSSIBLY_RELEVANT}
             ]
             log.info("Filtered for sinks.", qualified_count=len(sinks_opportunities))
 

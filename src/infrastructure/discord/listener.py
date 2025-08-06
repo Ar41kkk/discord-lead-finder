@@ -6,7 +6,7 @@ import discord
 import structlog
 from discord.ext import commands
 
-from dkh.domain.models import Message
+from domain.models import Message
 
 logger = structlog.get_logger(__name__)
 

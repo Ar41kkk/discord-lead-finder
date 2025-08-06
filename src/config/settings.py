@@ -6,7 +6,7 @@ import yaml
 from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-BASE_DIR = Path(__file__).resolve().parents[3]
+BASE_DIR = Path(__file__).resolve().parents[2]
 CONFIG_FILE = BASE_DIR / 'config.yaml'
 
 
@@ -124,7 +124,7 @@ TORTOISE_CONFIG = {
     "connections": {"default": settings.database.db_url},
     "apps": {
         "models": {
-            "models": ["dkh.database.models"],
+            "models": ["database.models"],
             "default_connection": "default",
         },
     },

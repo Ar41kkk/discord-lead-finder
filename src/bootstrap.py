@@ -2,13 +2,13 @@
 import discord
 import structlog
 
-from dkh.database.storage import DatabaseStorage
-from dkh.application.message_pipeline import MessagePipeline
-from dkh.application.services.backfill_service import BackfillService
-from dkh.application.services.message_recorder import MessageRecorder
-from dkh.application.utils import SimpleGlobalRateLimiter
-from dkh.config import settings
-from dkh.infrastructure.sinks.google_sheet import GoogleSheetSink
+from database.storage import DatabaseStorage
+from application.message_pipeline import MessagePipeline
+from application.services.backfill_service import BackfillService
+from application.services.message_recorder import MessageRecorder
+from application.utils import SimpleGlobalRateLimiter
+from config import settings
+from infrastructure.sinks.google_sheet import GoogleSheetSink
 
 logger = structlog.get_logger(__name__)
 
@@ -22,7 +22,9 @@ def bootstrap_live_pipeline() -> MessagePipeline:
     sinks = []
     try:
         # ✅ Спрощений виклик, передаємо лише назву аркуша
-        sink = GoogleSheetSink.create(worksheet_name=settings.google_sheet.live_sheet_name)
+        # має бути
+        sink = GoogleSheetSink.create(config=settings.google_sheet,
+                                      worksheet_name=settings.google_sheet.live_sheet_name)
         sinks.append(sink)
     except Exception:
         # Помилка вже залогована всередині .create(), тут можна нічого не робити
@@ -45,7 +47,9 @@ def bootstrap_backfill_service(client: discord.Client) -> BackfillService:
     db_storage = DatabaseStorage()
     sinks = []
     try:
-        sink = GoogleSheetSink.create(worksheet_name=settings.google_sheet.backfill_sheet_name)
+        # має бути
+        sink = GoogleSheetSink.create(config=settings.google_sheet,
+                                      worksheet_name=settings.google_sheet.live_sheet_name)
         sinks.append(sink)
     except Exception:
         logger.warning("Could not create Google Sheet sink for backfill mode. Continuing without it.")

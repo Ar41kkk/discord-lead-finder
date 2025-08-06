@@ -5,12 +5,12 @@ import structlog
 import discord
 from tortoise import Tortoise
 
-from dkh.bootstrap import bootstrap_live_pipeline, bootstrap_backfill_service
-from dkh.config import settings, configure_logging
-from dkh.config.settings import TORTOISE_CONFIG
-from dkh.infrastructure.discord.listener import Listener
-from dkh.application.services.sync_service import SyncService
-from dkh.application.services.export_service import ExportService
+from bootstrap import bootstrap_live_pipeline, bootstrap_backfill_service
+from config import settings, configure_logging
+from config.settings import TORTOISE_CONFIG
+from infrastructure.discord.listener import Listener
+from application.services.sync_service import SyncService
+from application.services.export_service import ExportService
 
 # Ініціалізуємо логер та Typer додаток
 logger = structlog.get_logger(__name__)

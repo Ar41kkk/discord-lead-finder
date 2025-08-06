@@ -2,10 +2,10 @@
 from collections import defaultdict
 import gspread
 import structlog
-from typing import List, Dict, Any
+from typing import List, Any
 
-from dkh.config import settings
-from dkh.database.models import Opportunity, ValidationStatus
+from config import settings
+from database.models import Opportunity, ValidationStatus
 
 logger = structlog.get_logger(__name__)
 
@@ -53,7 +53,8 @@ class StatsGeneratorService:
             if op.server_name:
                 stats = self.server_stats[op.server_name]
                 stats['keyword_hits'] += 1
-                if op.ai_status in {ValidationStatus.RELEVANT, ValidationStatus.HIGH_MAYBE}:
+                # Виправляємо неіснуючий статус на правильний з доменної моделі
+                if op.ai_status in {ValidationStatus.RELEVANT, ValidationStatus.POSSIBLY_RELEVANT}:
                     stats['openai_approved'] += 1
                 if op.manual_status and op.manual_status.lower() == self.MANUAL_APPROVED_STATUS:
                     stats['manual_approved'] += 1
@@ -62,7 +63,8 @@ class StatsGeneratorService:
             if op.keyword_trigger:
                 stats = self.keyword_stats[op.keyword_trigger]
                 stats['mentions'] += 1
-                if op.ai_status in {ValidationStatus.RELEVANT, ValidationStatus.HIGH_MAYBE}:
+                # І тут також
+                if op.ai_status in {ValidationStatus.RELEVANT, ValidationStatus.POSSIBLY_RELEVANT}:
                     stats['openai_approved'] += 1
                 if op.manual_status and op.manual_status.lower() == self.MANUAL_APPROVED_STATUS:
                     stats['manual_approved'] += 1

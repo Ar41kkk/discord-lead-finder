@@ -5,8 +5,8 @@ from openai import AsyncOpenAI, RateLimitError, APIError, APITimeoutError
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
 
-from dkh.config import settings
-from dkh.domain.models import Message, Validation, ValidationStatus
+from config import settings
+from domain.models import Message, Validation, ValidationStatus
 
 logger = structlog.get_logger(__name__)
 
@@ -20,6 +20,10 @@ except Exception as e:
 
 class LeadDetails(BaseModel):
     """Pydantic модель, що описує структуру даних, яку має повернути AI-агент."""
+    status: Literal["RELEVANT", "POSSIBLY_RELEVANT", "POSSIBLY_UNRELEVANT", "UNRELEVANT"] = Field(
+        ...,
+        description="Your final verdict for this message based on the detailed classification rules."
+    )
     is_lead: bool = Field(..., description="Чи є це повідомлення потенційним лідом")
     confidence: float = Field(..., description="Впевненість від 0.0 до 1.0")
     lead_type: Optional[Literal["direct_hire", "project_work", "paid_help", "other"]]
@@ -45,13 +49,20 @@ class AIAgentService:
 
     @staticmethod
     def _score_to_status(score: float, is_lead: bool) -> ValidationStatus:
+        """
+        Перетворює оцінку впевненості у розширений статус валідації.
+        """
         if not is_lead:
             return ValidationStatus.UNRELEVANT
+
         if score >= 0.85:
             return ValidationStatus.RELEVANT
-        if score >= 0.6:
-            return ValidationStatus.HIGH_MAYBE
-        return ValidationStatus.LOW_MAYBE
+        elif score >= 0.5:  # Від 0.5 до 0.85
+            return ValidationStatus.POSSIBLY_RELEVANT
+        elif score >= 0.1:  # Від 0.1 до 0.5
+            return ValidationStatus.POSSIBLY_UNRELEVANT
+        else:  # Все, що нижче 0.1
+            return ValidationStatus.UNRELEVANT
 
     async def validate(self, msg: Message) -> Validation:
         """

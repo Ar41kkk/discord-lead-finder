@@ -8,11 +8,11 @@ from pydantic import BaseModel, Field
 class ValidationStatus(Enum):
     """Статуси валідації повідомлення."""
 
-    RELEVANT = auto()
-    HIGH_MAYBE = auto()
-    LOW_MAYBE = auto()
-    UNRELEVANT = auto()
-    ERROR = auto()
+    RELEVANT = "RELEVANT"  # ✅ Однозначно лід
+    POSSIBLY_RELEVANT = "POSSIBLY_RELEVANT"  # 🤔 Є великий потенціал, треба дивитись
+    POSSIBLY_UNRELEVANT = "POSSIBLY_UNRELEVANT"  # ⚠️ Схоже на шум, але є маленький шанс
+    UNRELEVANT = "UNRELEVANT"  # ❌ Однозначно не лід
+    ERROR = "ERROR"  # 🚨 Помилка обробки
 
 class Message(BaseModel):
     """

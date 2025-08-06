@@ -5,7 +5,7 @@ from typing import Optional, List
 
 from tortoise.exceptions import IntegrityError
 
-from dkh.domain.models import Message as PydanticMessage, Validation as PydanticValidation, MessageOpportunity
+from domain.models import Message as PydanticMessage, Validation as PydanticValidation, MessageOpportunity
 from .models import Opportunity, ValidationStatus
 
 
@@ -34,7 +34,7 @@ class DatabaseStorage:
                 author_id=message_data.author_id,
                 author_name=message_data.author_name,
                 keyword_trigger=message_data.keyword,
-                ai_status=ValidationStatus(validation_data.status.name),
+                ai_status=validation_data.status.value,  # Краще використовувати .value для надійності
                 ai_score=validation_data.score,
                 ai_lead_type=validation_data.lead_type,
                 ai_reason=validation_data.reason,
@@ -72,7 +72,7 @@ class DatabaseStorage:
                 author_id=opp.message.author_id,
                 author_name=opp.message.author_name,
                 keyword_trigger=opp.message.keyword,
-                ai_status=ValidationStatus(opp.validation.status.name),
+                ai_status=opp.validation.status.value,
                 ai_score=opp.validation.score,
                 ai_lead_type=opp.validation.lead_type,
                 ai_reason=opp.validation.reason,

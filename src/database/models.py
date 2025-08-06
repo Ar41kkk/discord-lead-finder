@@ -2,14 +2,8 @@
 
 import enum
 from tortoise import fields, models
+from domain.models import ValidationStatus
 
-# Enum для статусів валідації. Гарантує цілісність даних.
-class ValidationStatus(str, enum.Enum):
-    RELEVANT = "RELEVANT"
-    HIGH_MAYBE = "HIGH_MAYBE"
-    LOW_MAYBE = "LOW_MAYBE"
-    UNRELEVANT = "UNRELEVANT"
-    ERROR = "ERROR"
 
 class Opportunity(models.Model):
     """

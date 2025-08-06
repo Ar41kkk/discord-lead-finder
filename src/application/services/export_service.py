@@ -3,8 +3,8 @@ import gspread
 import structlog
 from datetime import timezone
 
-from dkh.config import settings
-from dkh.database.models import Opportunity, ValidationStatus
+from config import settings
+from database.models import Opportunity
 from .stats_generator_service import StatsGeneratorService
 
 logger = structlog.get_logger(__name__)
