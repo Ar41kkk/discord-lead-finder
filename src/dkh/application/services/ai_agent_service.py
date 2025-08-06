@@ -1,7 +1,7 @@
 # src/dkh/application/services/ai_agent_service.py
 import instructor
 import structlog
-from openai import OpenAI
+from openai import AsyncOpenAI, RateLimitError, APIError, APITimeoutError
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
 
@@ -10,9 +10,11 @@ from dkh.domain.models import Message, Validation, ValidationStatus
 
 logger = structlog.get_logger(__name__)
 
-# Створюємо клієнт OpenAI, "пропатчений" бібліотекою instructor
-# Це дозволяє нам отримувати Pydantic моделі напряму з OpenAI
-aclient = instructor.patch(OpenAI(api_key=settings.openai_api_key.get_secret_value()))
+try:
+    aclient = instructor.patch(AsyncOpenAI(api_key=settings.openai_api_key.get_secret_value()))
+except Exception as e:
+    logger.critical("Failed to initialize OpenAI client. Check API key.", error=e)
+    aclient = None
 
 
 class LeadDetails(BaseModel):
@@ -37,6 +39,7 @@ class AIAgentService:
 
     @staticmethod
     def _score_to_status(score: float, is_lead: bool) -> ValidationStatus:
+        """Перетворює оцінку впевненості у статус валідації."""
         if not is_lead:
             return ValidationStatus.UNRELEVANT
         if score >= 0.85:
@@ -46,8 +49,19 @@ class AIAgentService:
         return ValidationStatus.LOW_MAYBE
 
     async def validate(self, msg: Message) -> Validation:
+        """
+        Аналізує повідомлення за допомогою OpenAI та повертає структурований результат.
+        """
+        log = logger.bind(msg_id=msg.message_id, channel_id=msg.channel_id)
+
+        if not aclient:
+            log.error("OpenAI client is not available. Skipping validation.")
+            return Validation(status=ValidationStatus.ERROR, reason="OpenAI client not initialized")
+
         try:
-            lead_details = aclient.chat.completions.create(
+            log.debug("Sending message to AI Agent for validation...")
+
+            lead_details: LeadDetails = await aclient.chat.completions.create(
                 model=self._config.model,
                 response_model=LeadDetails,
                 messages=[
@@ -58,16 +72,25 @@ class AIAgentService:
             )
 
             status = self._score_to_status(lead_details.confidence, lead_details.is_lead)
+            # ✅ Змінено на debug, щоб не засмічувати консоль
+            log.debug("Successfully validated message", status=status.name, score=lead_details.confidence)
 
-            # Повертаємо розширений результат валідації
             return Validation(
                 status=status,
                 score=lead_details.confidence,
                 reason=lead_details.summary,
                 lead_type=lead_details.lead_type,
-                # Додаємо нові поля, які ми хочемо зберігати
                 extracted_tech_stack=lead_details.tech_stack,
             )
-        except Exception:
-            logger.exception("AI Agent failed to validate message", msg_id=msg.message_id)
+        except RateLimitError as e:
+            log.warning("OpenAI rate limit exceeded. Check your plan and usage.", error=str(e))
+            return Validation(status=ValidationStatus.ERROR, reason="Rate limit exceeded")
+        except APITimeoutError as e:
+            log.warning("OpenAI request timed out.", error=str(e))
+            return Validation(status=ValidationStatus.ERROR, reason="API timeout")
+        except APIError as e:
+            log.error("OpenAI API error occurred.", error_code=e.code, error_message=str(e))
+            return Validation(status=ValidationStatus.ERROR, reason=f"API error: {e.code}")
+        except Exception as e:
+            log.exception("An unexpected error occurred in AI Agent.", error_type=type(e).__name__)
             return Validation(status=ValidationStatus.ERROR, reason="Agent processing failed")

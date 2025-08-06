@@ -3,8 +3,8 @@ import gspread
 import structlog
 from typing import List
 
-from dkh.config.settings import GoogleSheetSettings
-from dkh.domain.models import MessageOpportunity, ValidationStatus
+from dkh.config import settings
+from dkh.domain.models import MessageOpportunity
 from dkh.domain.ports import OpportunitySink
 
 logger = structlog.get_logger(__name__)
@@ -15,69 +15,67 @@ class GoogleSheetSink(OpportunitySink):
     Реалізація 'приймача' даних, що записує можливості в Google Sheets.
     Форматує дані у зрозумілий для людини вигляд.
     """
-    # --- ✅ Оновлені, більш зрозумілі заголовки ---
-    HEADER = [
-        "Time", "Server Name", "Channel Name", "Sender Name", "Message Content",
-        "Status", "Confidence", "Lead Type", "Message Link"
-    ]
-
-    # --- ✅ Нові "словники-перекладачі" для гарного форматування ---
-    STATUS_MAP = {
-        ValidationStatus.RELEVANT: "🔥 Hot Lead",
-        ValidationStatus.HIGH_MAYBE: "💡 Good Lead",
-        ValidationStatus.LOW_MAYBE: "🤔 Possible",
-        ValidationStatus.UNRELEVANT: "❌ Not a Lead",
-        ValidationStatus.ERROR: "⚠️ Error",
-    }
-
-    LEAD_TYPE_MAP = {
-        "direct_hire": "Direct Hire",
-        "project_work": "Project Work",
-        "paid_help": "Paid Help",
-        "other": "Other",
-    }
 
     def __init__(self, worksheet: gspread.Worksheet):
         self._worksheet = worksheet
         self._ensure_header()
 
     @classmethod
-    def create(cls, config: GoogleSheetSettings, worksheet_name: str) -> "GoogleSheetSink":
+    def create(cls, worksheet_name: str) -> "GoogleSheetSink":
+        """
+        Створює та повертає екземпляр GoogleSheetSink.
+        Інкапсулює логіку підключення та створення аркуша.
+        """
+        log = logger.bind(worksheet=worksheet_name)
+        log.info("Initializing Google Sheet sink...")
+
+        config = settings.google_sheet
+
         try:
             gc = gspread.service_account(filename=str(config.credentials_path))
             spreadsheet = gc.open_by_key(config.spreadsheet_id)
+
             try:
                 worksheet = spreadsheet.worksheet(worksheet_name)
+                log.info("Successfully connected to existing Google Sheet.")
             except gspread.WorksheetNotFound:
-                logger.warning(f"Worksheet '{worksheet_name}' not found. Creating it.")
-                worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows="1000", cols="20")
-            logger.info("Successfully connected to Google Sheets", sheet=worksheet_name)
+                log.warning("Worksheet not found, creating it.")
+                header = settings.export.default_header
+                worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows="1000", cols=len(header))
+                worksheet.append_row(header, value_input_option='USER_ENTERED')
+                log.info("Created new worksheet with header.")
+
             return cls(worksheet)
-        except gspread.exceptions.GSpreadException as e:
-            logger.error("Failed to initialize Google Sheets sink", error=e)
+        except Exception:
+            log.exception("Failed to initialize Google Sheets sink.")
             raise
 
     def _ensure_header(self):
+        """Перевіряє наявність заголовка в аркуші та створює його, якщо потрібно."""
+        log = logger.bind(worksheet=self._worksheet.title)
         try:
-            if self._worksheet.get('A1') is None:
-                self._worksheet.append_row(self.HEADER)
-                logger.info("Created header row in Google Sheet.", sheet=self._worksheet.title)
-        except gspread.exceptions.GSpreadException as e:
-            logger.error("Failed to ensure header in Google Sheet", error=e)
+            if not self._worksheet.get('A1:A1'):
+                header = settings.export.default_header
+                self._worksheet.append_row(header, value_input_option='USER_ENTERED')
+                log.info("Created header row in empty Google Sheet.")
+        except Exception:
+            log.exception("Failed to ensure header in Google Sheet.")
 
     def _format_rows(self, opportunities: List[MessageOpportunity]) -> List[List[str]]:
         """
-        Перетворює об'єкти Opportunity у рядки для запису, використовуючи наші "перекладачі".
+        Перетворює об'єкти Opportunity у рядки для запису, використовуючи "перекладачі" з налаштувань.
         """
         rows = []
+        status_map = settings.export.status_map
+        lead_type_map = settings.export.lead_type_map
+
         for opp in opportunities:
             msg = opp.message
             val = opp.validation
 
-            # --- ✅ Використовуємо словники для отримання гарних назв ---
-            status_str = self.STATUS_MAP.get(val.status, val.status.name)
-            score_str = f"{val.score:.0%}"  # Форматуємо у відсотки, напр. "90%"
-            lead_type_str = self.LEAD_TYPE_MAP.get(val.lead_type, val.lead_type) if val.lead_type else "N/A"
+            status_str = status_map.get(val.status.name, val.status.value)
+            score_str = f"{val.score:.0%}" if val.score is not None else ""
+            lead_type_str = lead_type_map.get(val.lead_type, val.lead_type) if val.lead_type else "N/A"
 
             rows.append([
                 msg.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
@@ -85,20 +83,27 @@ class GoogleSheetSink(OpportunitySink):
                 msg.channel_name,
                 msg.author_name,
                 msg.content,
-                status_str,  # <- Гарний статус
-                score_str,  # <- Оцінка у відсотках
-                lead_type_str,  # <- Гарний тип ліда
+                status_str,
+                score_str,
+                lead_type_str,
                 msg.jump_url,
             ])
         return rows
 
     async def save(self, opportunities: List[MessageOpportunity]) -> None:
+        """Зберігає пакет можливостей у Google Sheet."""
         if not opportunities:
             return
-        rows_to_append = self._format_rows(opportunities)
+
+        log = logger.bind(worksheet=self._worksheet.title, batch_size=len(opportunities))
+        log.debug("Formatting rows for Google Sheet...")
+
         try:
+            rows_to_append = self._format_rows(opportunities)
+            log.info("Saving rows to Google Sheet...")
             self._worksheet.append_rows(rows_to_append, value_input_option='USER_ENTERED')
-            logger.debug(f"Successfully saved {len(rows_to_append)} opps to Google Sheets.",
-                         sheet=self._worksheet.title)
-        except gspread.exceptions.GSpreadException as e:
-            logger.error("Failed to save data to Google Sheets", error=e)
+            log.info("Successfully saved rows to Google Sheet.")
+        except Exception:
+            log.exception("Failed to save data to Google Sheets")
+            raise
+

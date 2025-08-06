@@ -4,11 +4,9 @@
 
 # Режим роботи: "backfill" (збирає історію) або "live" (слухає нові повідомлення)
 mode: "backfill"
-history_days: 7
+history_days: 1
 
 # --- Загальні налаштування обробки ---
-batch_size: 500
-# --- ✅ НОВИЙ РОЗДІЛ ТУТ ---
 database:
   db_url: "sqlite://db.sqlite3" # Шлях до вашої бази даних
 
@@ -18,7 +16,7 @@ openai:
   model: "gpt-4o-mini"
   temperature: 0.0
   timeout: 45
-  max_retries: 3
+  max_retries: 1
   system_prompt: |
     You are an expert Business Development Analyst for a top-tier software development agency. Your mission is to meticulously analyze Discord messages to identify high-quality business opportunities.
 

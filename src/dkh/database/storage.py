@@ -95,3 +95,14 @@ class DatabaseStorage:
         Знаходить дату ОСТАННЬОГО обробленого повідомлення для конкретного каналу.
         """
         latest_opportunity = await Opportunity.filter(channel_id=channel_id).order_by("-message_timestamp").first()
+
+    async def get_existing_urls(self, message_urls: List[str]) -> set[str]:
+        """
+        Приймає список URL і повертає множину тих URL, які ВЖЕ існують у базі.
+        Це ключовий метод для уникнення повторної обробки.
+        """
+        if not message_urls:
+            return set()
+
+        existing_records = await Opportunity.filter(message_url__in=message_urls).values_list('message_url', flat=True)
+        return set(existing_records)

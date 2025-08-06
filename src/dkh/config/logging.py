@@ -23,8 +23,6 @@ def configure_logging() -> None:
         structlog.stdlib.add_log_level,
         structlog.processors.TimeStamper(fmt='iso'),
         structlog.processors.StackInfoRenderer(),
-        # Примітка: format_exc_info прибираємо, щоб уникнути UserWarning,
-        # ConsoleRenderer і JSONRenderer обробляють винятки самі.
         structlog.processors.UnicodeDecoder(),
     ]
 
@@ -45,7 +43,6 @@ def configure_logging() -> None:
     )
 
     console_handler = logging.StreamHandler(sys.stdout)
-    # кольори та автоматична обробка винятків
     console_renderer = structlog.dev.ConsoleRenderer(colors=True, exception_formatter=structlog.dev.plain_traceback)
     console_formatter = structlog.stdlib.ProcessorFormatter(
         processor=console_renderer,
@@ -71,15 +68,15 @@ def configure_logging() -> None:
     root_logger.setLevel(log_level)
 
     # --- ✅ ОСНОВНА ЗМІНА ТУТ ---
-    # Встановлюємо рівень ERROR для всіх компонентів discord, щоб приховати
-    # попередження про ліміти запитів та інші некритичні повідомлення.
-    # Тепер ти будеш бачити тільки справжні помилки від бібліотеки.
+    # Встановлюємо вищий рівень логування для сторонніх бібліотек,
+    # щоб приховати їхній "шум".
     logging.getLogger('discord').setLevel(logging.ERROR)
     logging.getLogger('discord.http').setLevel(logging.ERROR)
     logging.getLogger('discord.state').setLevel(logging.ERROR)
-
-    # Інші бібліотеки можна залишити на WARNING
     logging.getLogger('httpx').setLevel(logging.WARNING)
+    # --- ✅ ВИПРАВЛЕННЯ: Приглушуємо логер бібліотеки openai ---
+    logging.getLogger('openai').setLevel(logging.WARNING)
+
 
     logger = structlog.get_logger(__name__)
     logger.info('✅ Logging configured successfully', log_level=settings.log_level)
