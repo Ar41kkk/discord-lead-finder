@@ -1,4 +1,4 @@
-# src/dkh/infrastructure/sinks/google_sheet.py
+# src/infrastructure/sinks/google_sheet.py
 import gspread
 import structlog
 from typing import List
@@ -15,13 +15,13 @@ class GoogleSheetSink(OpportunitySink):
     Реалізація 'приймача' даних, що записує можливості в Google Sheets.
     Форматує дані у зрозумілий для людини вигляд.
     """
-    # --- ✅ Оновлені, більш зрозумілі заголовки ---
+    # --- ОНОВЛЕНИЙ ЗАГОЛОВОК З НОВИМ ПОРЯДКОМ ---
     HEADER = [
-        "Time", "Server Name", "Channel Name", "Sender Name", "Message Content",
-        "Status", "Confidence", "Lead Type", "Message Link"
+        "Discovered By", "Time", "Server Name", "Channel Name", "Sender Name",
+        "Message Content", "S1 Verdict", "S1 Score", "S2 Verdict", "S2 Score",
+        "Lead Type", "Message Link"
     ]
 
-    # --- ✅ Нові "словники-перекладачі" для гарного форматування ---
     STATUS_MAP = {
         ValidationStatus.RELEVANT: "🔥 Hot Lead",
         ValidationStatus.POSSIBLY_RELEVANT: "💡 Good Lead",
@@ -59,35 +59,48 @@ class GoogleSheetSink(OpportunitySink):
 
     def _ensure_header(self):
         try:
-            if self._worksheet.get('A1') is None:
+            # Перевіряємо, чи заголовок відповідає новому формату. Якщо ні - оновлюємо.
+            header_row = self._worksheet.get('A1:L1') # Читаємо перші 12 колонок
+            if not header_row or header_row[0] != self.HEADER:
+                self._worksheet.clear()
                 self._worksheet.append_row(self.HEADER)
-                logger.info("Created header row in Google Sheet.", sheet=self._worksheet.title)
+                logger.info("Created or updated header row in Google Sheet.", sheet=self._worksheet.title)
         except gspread.exceptions.GSpreadException as e:
             logger.error("Failed to ensure header in Google Sheet", error=e)
 
     def _format_rows(self, opportunities: List[MessageOpportunity]) -> List[List[str]]:
         """
-        Перетворює об'єкти Opportunity у рядки для запису, використовуючи наші "перекладачі".
+        Перетворює об'єкти Opportunity у рядки для запису, враховуючи двохетапну валідацію.
         """
         rows = []
         for opp in opportunities:
             msg = opp.message
-            val = opp.validation
+            s1_val = opp.stage_one_validation
+            s2_val = opp.stage_two_validation
 
-            # --- ✅ Використовуємо словники для отримання гарних назв ---
-            status_str = self.STATUS_MAP.get(val.status, val.status.name)
-            score_str = f"{val.score:.0%}"  # Форматуємо у відсотки, напр. "90%"
-            lead_type_str = self.LEAD_TYPE_MAP.get(val.lead_type, val.lead_type) if val.lead_type else "N/A"
+            s1_status_str = self.STATUS_MAP.get(s1_val.status, s1_val.status.name)
+            s1_score_str = f"{s1_val.score:.0%}"
 
+            if s2_val:
+                s2_status_str = self.STATUS_MAP.get(s2_val.status, s2_val.status.name)
+                s2_score_str = f"{s2_val.score:.0%}"
+                lead_type_str = self.LEAD_TYPE_MAP.get(s2_val.lead_type, s2_val.lead_type) if s2_val.lead_type else "N/A"
+            else:
+                s2_status_str, s2_score_str, lead_type_str = "N/A", "N/A", "N/A"
+
+            # --- ОНОВЛЕНИЙ ПОРЯДОК ДАНИХ У РЯДКУ ---
             rows.append([
+                opp.bot_name or "N/A",  # <-- Ім'я акаунта тепер на першому місці
                 msg.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
                 msg.guild_name or "N/A",
                 msg.channel_name,
                 msg.author_name,
                 msg.content,
-                status_str,  # <- Гарний статус
-                score_str,  # <- Оцінка у відсотках
-                lead_type_str,  # <- Гарний тип ліда
+                s1_status_str,
+                s1_score_str,
+                s2_status_str,
+                s2_score_str,
+                lead_type_str,
                 msg.jump_url,
             ])
         return rows

@@ -1,106 +1,86 @@
-# src/dashboard/pages/page_bot_control.py
-
+# ── src/dashboard/pages/page_bot_control.py ──────────────────────────────────────
 import streamlit as st
-import os
-import subprocess
-import psutil
 from pathlib import Path
-import sys
+from typing import Any
+
 from streamlit_autorefresh import st_autorefresh
 
-# Додаємо шлях до 'src' для правильного імпорту
-sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-from src.utils import get_project_root
-
-# --- Шляхи ---
-PROJECT_ROOT = get_project_root()
-PID_FILE = PROJECT_ROOT / ".bot.pid"
-VENV_PYTHON = sys.executable
-CLI_SCRIPT = PROJECT_ROOT / "src" / "interface" / "cli.py"
-LOG_FILE = PROJECT_ROOT / "logs" / "app.log"
+from dashboard.bot_utils import get_status, start_bot, stop_bot, log_file
+from dashboard.constants import AI_QUALIFIED_STATUSES, MANUAL_APPROVED_STATUS
+from config.settings import settings
 
 
-def get_bot_status():
-    """Перевіряє статус бота за PID файлом."""
-    if not PID_FILE.exists():
-        return {"status": "Stopped", "pid": None}
+def display_page(df_full: Any) -> None:
+    """Сторінка керування ботами + live-статистика."""
+    st.header("🤖 Керування Ботами")
+    st_autorefresh(interval=2_000, key="bot_control_refresh")
 
-    try:
-        with open(PID_FILE, "r") as f:
-            pid = int(f.read().strip())
-
-        if psutil.pid_exists(pid):
-            # Перевіряємо, чи процес з цим PID дійсно є нашим ботом
-            proc = psutil.Process(pid)
-            # Ця перевірка може бути не ідеальною, але значно підвищує надійність
-            if 'python' in proc.name().lower() and any('cli.py' in cmd for cmd in proc.cmdline()):
-                return {"status": "Running", "pid": pid}
-    except (psutil.NoSuchProcess, ValueError, IOError):
-        # Якщо процес не знайдено або файл пошкоджено, видаляємо застарілий PID файл
-        PID_FILE.unlink(missing_ok=True)
-
-    return {"status": "Stopped", "pid": None}
-
-
-def display_page():
-    st_autorefresh(interval=5000, key="bot_control_refresher")
-    st.header("🤖 Керування Live-Ботом", divider='rainbow')
-
-    status_info = get_bot_status()
-    status = status_info["status"]
-    pid = status_info["pid"]
-
-    if status == "Running":
-        st.success(f"**Статус:** Працює ✅ (PID: {pid})")
-    else:
-        st.info("**Статус:** Зупинено ❌")
-
-    col1, col2, _ = st.columns([1, 1, 4])
-    with col1:
-        if st.button("🚀 Запустити", disabled=(status == "Running"), use_container_width=True):
-            try:
-                creation_flags = 0
-                if sys.platform == "win32":
-                    creation_flags = subprocess.CREATE_NO_WINDOW
-
-                env = os.environ.copy()
-                subprocess.Popen(
-                    [str(VENV_PYTHON), str(CLI_SCRIPT), "live"],
-                    cwd=PROJECT_ROOT, env=env, creationflags=creation_flags
-                )
-                st.toast("Команду на запуск відправлено!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Не вдалося запустити бота: {e}")
-
-    with col2:
-        if st.button("🛑 Зупинити", disabled=(status != "Running"), use_container_width=True):
-            if pid and psutil.pid_exists(pid):
-                try:
-                    p = psutil.Process(pid)
-                    p.terminate()  # М'яка зупинка
-                    p.wait(timeout=5)  # Чекаємо до 5 секунд
-                    st.toast(f"Процес бота (PID: {pid}) успішно зупинено.")
-                except psutil.TimeoutExpired:
-                    p.kill()  # Примусова зупинка, якщо м'яка не спрацювала
-                    st.toast(f"Процес бота (PID: {pid}) зупинено примусово.")
-                except psutil.NoSuchProcess:
-                    pass  # Процес вже не існує
-
-                if PID_FILE.exists():
-                    PID_FILE.unlink(missing_ok=True)
-            st.rerun()
+    # ── кнопки «старт / стоп усіх» ───────────────────────────────────────────────
+    col_start, col_stop = st.columns(2)
+    with col_start:
+        if st.button("🚀 Старт усіх", use_container_width=True):
+            for acc in settings.discord.accounts:
+                start_bot(acc.name)
+    with col_stop:
+        if st.button("🛑 Стоп усіх", use_container_width=True):
+            for acc in settings.discord.accounts:
+                stop_bot(acc.name)
 
     st.divider()
-    st.subheader("Останні записи в лог-файлі")
-    if LOG_FILE.exists():
-        try:
-            # Очищуємо кеш файлу, щоб завжди читати свіжу версію
-            os.stat(LOG_FILE)
-            with open(LOG_FILE, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-                st.code("".join(lines[-100:]), language="log")
-        except Exception as e:
-            st.error(f"Не вдалося прочитати лог-файл: {e}")
-    else:
-        st.info("Лог-файл роботи бота ще не створено.")
+
+    # ── для кожного акаунта показуємо статус, метрики, логи ─────────────────────
+    for acc in settings.discord.accounts:
+        raw_name = acc.name                    # «Tyomizxxx»
+        nick_prefix = raw_name.lower()         # «tyomizxxx»
+
+        # ① статус процесу --------------------------------------------------------
+        # ① статус процесу --------------------------------------------------------
+        state = get_status(raw_name)
+        emoji = {"Running": "✅", "Launching": "⏳",
+                 "Stopped": "❌"}.get(state, "⚠️")
+        st.subheader(f"{raw_name} — {state} {emoji}")
+
+        # ② DataFrame slice лише для цього бота ----------------------------------
+        if df_full is not None and not df_full.empty:
+            prefix = raw_name.lower()
+            mask = (
+                df_full["bot_user_name"]
+                .fillna("")  # щоб не було NaN
+                .str.lower()
+                .str.split("#", n=1)  # ['parfolemu16', '1234'] або ['parfolemu16']
+                .str[0]  # префікс
+                .eq(prefix)  # точний збіг
+            )
+            sub = df_full[mask]
+        else:
+            sub = None
+
+        # ③ метрики --------------------------------------------------------------
+        if sub is not None and not sub.empty:
+            total_triggers    = sub["keyword_trigger"].notna().sum()
+            stage1_passed     = sub["ai_stage_one_status"].isin(
+                                    AI_QUALIFIED_STATUSES).sum()
+            stage2_passed     = sub["ai_stage_two_status"].isin(
+                                    AI_QUALIFIED_STATUSES).sum()
+            manually_approved = (sub["manual_status"]
+                                   .str.lower()
+                                   .eq(MANUAL_APPROVED_STATUS)).sum()
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Тригери",        total_triggers)
+            c2.metric("Етап 1 pass",    stage1_passed)
+            c3.metric("Етап 2 pass",    stage2_passed)
+            c4.metric("Підтв. вручну",  manually_approved)
+        else:
+            st.info("Дані для цього акаунта відсутні або БД порожня.")
+
+        # ④ LIVE-логи ------------------------------------------------------------
+        lf = log_file(raw_name)
+        if lf.exists():
+            with st.expander(f"📄 Логи {raw_name}", expanded=False):
+                tail = lf.read_text(encoding="utf-8", errors="replace").splitlines()[-50:]
+                st.code("\n".join(tail), language="bash")
+        else:
+            st.info("Лог-файл ще не створено.")
+
+        st.divider()

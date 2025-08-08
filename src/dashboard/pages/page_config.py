@@ -1,114 +1,145 @@
-# src/dashboard/pages/page_config.py
-
 import streamlit as st
 import time
+import yaml
+from pathlib import Path
 from ..config_utils import load_config, save_config
-from ..bot_utils import get_bot_status, start_bot, stop_bot  # <-- Нові імпорти
+
+from dashboard.bot_utils import get_status, start_bot, stop_bot
 
 
-def display_page(config_path):
-    """Відображає вкладку для редагування конфігурації з функцією перезапуску бота."""
+def display_page(config_path: Path):
+    """Відображає вкладку для редагування конфігурації з функцією перезапуску ботів."""
     st.header("⚙️ Редактор Конфігурації", divider='rainbow')
 
     config_data = load_config(config_path)
     if config_data is None:
         return
 
-    basic_tab, advanced_tab = st.tabs(["Базові налаштування", "Розширені налаштування"])
+    tab_main, tab_ai, tab_discord, tab_advanced = st.tabs([
+        "🔑 Ключові слова", "🧠 AI", "💬 Discord", "🛠️ Розширені"
+    ])
 
     with st.form(key="config_form"):
-        with basic_tab:
-            st.subheader("Основні параметри для щоденного використання")
-            st.markdown("#### Ключові слова для пошуку")
+        # --- Ключові слова ---
+        with tab_main:
+            st.subheader("Слова-тригери")
             keywords_str = "\n".join(config_data.get('keywords', []))
-            edited_keywords = st.text_area("Введіть кожне слово з нового рядка", value=keywords_str, height=200,
-                                           help="Слова, на які буде реагувати бот.")
-            st.markdown("#### Налаштування AI")
-            openai_config = config_data.get('openai', {})
-            edited_system_prompt = st.text_area("Системний промпт для AI", value=openai_config.get('system_prompt', ''),
-                                                height=300,
-                                                help="Основна інструкція, яка визначає поведінку AI-агента.")
-            st.markdown("#### Налаштування Discord")
-            discord_config = config_data.get('discord', {})
-            edited_track_all = st.toggle("Відстежувати всі канали?",
-                                         value=discord_config.get('track_all_channels', True),
-                                         help="Якщо вимкнено, бот буде працювати лише з каналами з білого списку.")
-            whitelist_str = "\n".join(map(str, discord_config.get('channel_whitelist', [])))
-            edited_whitelist = st.text_area("Білий список ID каналів (якщо відстеження не всіх)", value=whitelist_str,
-                                            height=150, help="Введіть ID кожного каналу з нового рядка.")
+            edited_keywords = st.text_area(
+                "Кожне слово/фразу з нового рядка",
+                value=keywords_str,
+                height=300,
+                key="keywords_area"
+            )
 
-        with advanced_tab:
-            st.subheader("Детальні налаштування для тонкої конфігурації")
-            st.markdown("##### Загальні")
-            edited_history_days = st.number_input("Глибина сканування історії (днів)",
-                                                  value=config_data.get('history_days', 7), min_value=1)
-            edited_log_level = st.selectbox("Рівень логування",
-                                            options=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
-                                            index=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'].index(
-                                                config_data.get('log_level', 'INFO')))
-            st.markdown("##### Параметри OpenAI")
-            col1, col2, col3 = st.columns(3)
-            edited_openai_model = col1.text_input("Модель", value=openai_config.get('model', 'gpt-4o-mini'))
-            edited_openai_temp = col2.number_input("Температура", value=openai_config.get('temperature', 0.0),
-                                                   min_value=0.0, max_value=2.0, step=0.1)
-            edited_openai_retries = col3.number_input("Кількість спроб (retries)",
-                                                      value=openai_config.get('max_retries', 3), min_value=0)
-            st.markdown("##### Параметри Discord")
-            col_d1, col_d2, col_d3 = st.columns(3)
-            edited_discord_channels = col_d1.number_input("Одночасних каналів (concurrent)",
-                                                          value=discord_config.get('concurrent_channels', 12),
-                                                          min_value=1)
-            edited_discord_pause = col_d2.number_input("Пауза між запитами (сек)",
-                                                       value=discord_config.get('batch_pause_seconds', 0.3),
-                                                       min_value=0.0, step=0.1)
-            st.markdown("##### Назви аркушів Google Sheets")
-            gs_config = config_data.get('google_sheet', {})
-            col_gs1, col_gs2 = st.columns(2)
-            edited_gs_live = col_gs1.text_input("Live Sheet", value=gs_config.get('live_sheet_name', 'Live'))
-            edited_gs_stats = col_gs2.text_input("Stats Sheet", value=gs_config.get('stats_sheet_name', 'Stats'))
-            edited_gs_leads = col_gs1.text_input("Leads Sheet", value=gs_config.get('leads_sheet_name', 'Leads'))
+        # --- AI налаштування ---
+        with tab_ai:
+            s1 = config_data.get('openai', {}).get('stage_one', {})
+            s2 = config_data.get('openai', {}).get('stage_two', {})
 
-        st.markdown("---")
-        # Змінюємо текст кнопки для ясності
-        submitted = st.form_submit_button("💾 Зберегти та Перезапустити Бота", use_container_width=True, type="primary")
+            st.subheader("Етап 1 (Stage One)")
+            edited_s1_model = st.text_input(
+                "Модель AI (Stage One)",
+                value=s1.get('model', 'gpt-3.5-turbo'),
+                key="s1_model"
+            )
+            edited_s1_prompt = st.text_area(
+                "Промпт AI (Stage One)",
+                value=s1.get('system_prompt', ''),
+                height=200,
+                key="s1_prompt"
+            )
 
-        if submitted:
-            # Збираємо всі оновлені дані з обох вкладок
-            updated_config = config_data.copy()
-            updated_config['keywords'] = [kw.strip() for kw in edited_keywords.split("\n") if kw.strip()]
-            updated_config.setdefault('openai', {})['system_prompt'] = edited_system_prompt
-            updated_config.setdefault('discord', {})['track_all_channels'] = edited_track_all
-            updated_config.setdefault('discord', {})['channel_whitelist'] = [int(ch_id.strip()) for ch_id in
-                                                                             edited_whitelist.split("\n") if
-                                                                             ch_id.strip()]
-            updated_config['history_days'] = edited_history_days
-            updated_config['log_level'] = edited_log_level
-            updated_config.setdefault('openai', {})['model'] = edited_openai_model
-            updated_config.setdefault('openai', {})['temperature'] = edited_openai_temp
-            updated_config.setdefault('openai', {})['max_retries'] = edited_openai_retries
-            updated_config.setdefault('discord', {})['concurrent_channels'] = edited_discord_channels
-            updated_config.setdefault('discord', {})['batch_pause_seconds'] = edited_discord_pause
-            updated_config.setdefault('google_sheet', {})['live_sheet_name'] = edited_gs_live
-            updated_config.setdefault('google_sheet', {})['stats_sheet_name'] = edited_gs_stats
-            updated_config.setdefault('google_sheet', {})['leads_sheet_name'] = edited_gs_leads
+            st.divider()
+            st.subheader("Етап 2 (Stage Two)")
+            edited_s2_model = st.text_input(
+                "Модель AI (Stage Two)",
+                value=s2.get('model', 'gpt-4o-mini'),
+                key="s2_model"
+            )
+            edited_s2_prompt = st.text_area(
+                "Промпт AI (Stage Two)",
+                value=s2.get('system_prompt', ''),
+                height=200,
+                key="s2_prompt"
+            )
 
-            if save_config(config_path, updated_config):
-                st.success("Конфігурацію успішно збережено!")
+        # --- Discord налаштування ---
+        with tab_discord:
+            discord_cfg = config_data.get('discord', {})
+            st.subheader("Discord: трекінг каналів")
+            edited_track_all = st.toggle(
+                "Трекати всі канали?",
+                value=discord_cfg.get('track_all_channels', True),
+                key="track_all_toggle"
+            )
+            whitelist_str = "\n".join(map(str, discord_cfg.get('channel_whitelist', [])))
+            edited_whitelist = st.text_area(
+                "Білий список ID каналів",
+                value=whitelist_str,
+                height=150,
+                key="whitelist_area"
+            )
 
-                # --- НОВА ЛОГІКА ПЕРЕЗАПУСКУ ---
-                status_info = get_bot_status()
+        # --- Інші налаштування ---
+        with tab_advanced:
+            st.subheader("Інші параметри")
+            edited_days = st.number_input(
+                "Глибина історії (днів)",
+                value=config_data.get('history_days', 7),
+                min_value=1,
+                key="history_days_input"
+            )
+            levels = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
+            edited_level = st.selectbox(
+                "Рівень логів",
+                options=levels,
+                index=levels.index(config_data.get('log_level', 'INFO')),
+                key="log_level_select"
+            )
 
-                if status_info["status"] == "Running":
-                    with st.spinner("Зупиняю поточний процес бота..."):
-                        stop_bot()
-                        time.sleep(3)  # Даємо час процесу повністю завершитись
+        st.divider()
+        submitted = st.form_submit_button("💾 Зберегти та Перезапустити активні боти")
 
-                with st.spinner("Запускаю бота з новою конфігурацією..."):
-                    start_bot()
-                    time.sleep(3)  # Даємо боту час на ініціалізацію
 
-                st.success("Бот успішно перезапущений з новими налаштуваннями!")
-                time.sleep(2)
-                st.rerun()
-            else:
-                st.error("Не вдалося зберегти конфігурацію.")
+    if not submitted:
+        return
+
+    # Збираємо й зберігаємо нові налаштування
+    updated = config_data.copy()
+    updated['keywords'] = [w.strip() for w in edited_keywords.splitlines() if w.strip()]
+
+    updated.setdefault('openai', {}).setdefault('stage_one', {})['model'] = edited_s1_model
+    updated['openai']['stage_one']['system_prompt'] = edited_s1_prompt
+    updated.setdefault('openai', {}).setdefault('stage_two', {})['model'] = edited_s2_model
+    updated['openai']['stage_two']['system_prompt'] = edited_s2_prompt
+
+    updated.setdefault('discord', {})['track_all_channels'] = edited_track_all
+    updated['discord']['channel_whitelist'] = [
+        int(x.strip()) for x in edited_whitelist.splitlines() if x.strip()
+    ]
+
+    updated['history_days'] = edited_days
+    updated['log_level'] = edited_level
+
+    if save_config(config_path, updated):
+        st.success("Конфігурацію збережено!")
+    else:
+        st.error("Не вдалося зберегти конфігурацію.")
+        return
+
+    # Перезапускаємо ті боти, що зараз Running
+    with st.spinner("Перезапуск ботів..."):
+        cnt = 0
+        for acc in updated.get('discord', {}).get('accounts', []):
+            name = acc.get('name')
+            if name and get_status(name) == "Running":
+                stop_bot(name)
+                time.sleep(1)
+                start_bot(name)
+                time.sleep(1)
+                cnt += 1
+
+    if cnt:
+        st.success(f"Перезапущено {cnt} бот(ів).")
+    else:
+        st.info("Не знайдено запущених ботів для перезапуску.")

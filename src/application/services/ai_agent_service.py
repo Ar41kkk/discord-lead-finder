@@ -1,4 +1,4 @@
-# src/dkh/application/services/ai_agent_service.py
+# src/application/services/ai_agent_service.py
 import instructor
 import structlog
 from openai import AsyncOpenAI, RateLimitError, APIError, APITimeoutError
@@ -6,20 +6,31 @@ from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
 
 from config import settings
-from domain.models import Message, Validation, ValidationStatus
+from domain.models import Message, ValidationResult, ValidationStatus
 
 logger = structlog.get_logger(__name__)
 
 # Ініціалізуємо OpenAI-клієнт при старті модуля
 try:
-    aclient = instructor.patch(AsyncOpenAI(api_key=settings.openai_api_key.get_secret_value()))
+    # Використовуємо правильний шлях до ключа: settings.openai.api_key
+    aclient = instructor.patch(AsyncOpenAI(api_key=settings.openai.api_key.get_secret_value()))
 except Exception as e:
     logger.critical("Failed to initialize OpenAI client. Check API key.", error=e)
     aclient = None
 
 
-class LeadDetails(BaseModel):
-    """Pydantic модель, що описує структуру даних, яку має повернути AI-агент."""
+class StageOneResult(BaseModel):
+    """Pydantic модель для першого, швидкого етапу валідації."""
+    verdict: Literal["POTENTIAL", "JUNK"] = Field(
+        ...,
+        description="Is there any potential for this to be a lead, or is it obvious junk/spam?"
+    )
+    confidence: float = Field(..., description="Confidence in the verdict from 0.0 to 1.0")
+    reason: str = Field(..., description="A very brief (1-2 sentences) reasoning for the verdict.")
+
+
+class StageTwoResult(BaseModel):
+    """Pydantic модель для другого, детального етапу валідації."""
     status: Literal["RELEVANT", "POSSIBLY_RELEVANT", "POSSIBLY_UNRELEVANT", "UNRELEVANT"] = Field(
         ...,
         description="Your final verdict for this message based on the detailed classification rules."
@@ -35,12 +46,11 @@ class AIAgentService:
     """
     AI-агент, що використовує `instructor` для аналізу повідомлень.
     """
-
-    # Загальний лічильник запитів (поділений між усіма інстансами)
     total_requests: int = 0
 
     def __init__(self):
-        self._config = settings.openai
+        self._config_stage_one = settings.openai.stage_one
+        self._config_stage_two = settings.openai.stage_two
 
     @classmethod
     def increment_request_count(cls, count: int = 1):
@@ -57,58 +67,84 @@ class AIAgentService:
 
         if score >= 0.85:
             return ValidationStatus.RELEVANT
-        elif score >= 0.5:  # Від 0.5 до 0.85
+        elif score >= 0.5:
             return ValidationStatus.POSSIBLY_RELEVANT
-        elif score >= 0.1:  # Від 0.1 до 0.5
+        elif score >= 0.1:
             return ValidationStatus.POSSIBLY_UNRELEVANT
-        else:  # Все, що нижче 0.1
+        else:
             return ValidationStatus.UNRELEVANT
 
-    async def validate(self, msg: Message) -> Validation:
+    async def validate_stage_one(self, msg: Message) -> ValidationResult:
         """
-        Аналізує повідомлення за допомогою OpenAI та повертає структурований результат.
+        Виконує перший етап перевірки: швидкий фільтр сміття.
         """
-        log = logger.bind(msg_id=msg.message_id, channel_id=msg.channel_id)
-
+        log = logger.bind(msg_id=msg.message_id, stage=1)
         if not aclient:
-            log.error("OpenAI client is not available. Skipping validation.")
-            return Validation(status=ValidationStatus.ERROR, reason="Client not initialized")
+            log.error("OpenAI client is not available.")
+            return ValidationResult(status=ValidationStatus.ERROR, reason="Client not initialized")
 
         try:
-            # Інкрементуємо глобальний лічильник перед запитом
             AIAgentService.increment_request_count()
+            log.info("Sending message to AI Agent for validation (Stage 1)...")
 
-            log.info("Sending message to AI Agent for validation...")
-            lead_details: LeadDetails = await aclient.chat.completions.create(
-                model=self._config.model,
-                response_model=LeadDetails,
+            result: StageOneResult = await aclient.chat.completions.create(
+                # --- ВИКОРИСТОВУЄМО НАЛАШТУВАННЯ З КОНФІГУ ---
+                model=self._config_stage_one.model,
+                response_model=StageOneResult,
                 messages=[
-                    {"role": "system", "content": self._config.system_prompt},
+                    {"role": "system", "content": self._config_stage_one.system_prompt},
                     {"role": "user", "content": f"Analyze this message:\n---\n{msg.content}\n---"},
                 ],
-                max_retries=self._config.max_retries,
+                max_retries=self._config_stage_one.max_retries,
+            )
+
+            status = ValidationStatus.POSSIBLY_RELEVANT if result.verdict == "POTENTIAL" else ValidationStatus.UNRELEVANT
+            log.debug("Stage 1 validation successful.", status=status.name, score=result.confidence)
+
+            return ValidationResult(status=status, score=result.confidence, reason=result.reason)
+
+        except Exception as e:
+            log.exception("Unexpected error in AI Agent (Stage 1).")
+            return ValidationResult(status=ValidationStatus.ERROR, reason="Agent processing failed")
+
+    async def validate_stage_two(self, msg: Message) -> ValidationResult:
+        """
+        Виконує другий етап перевірки: детальний аналіз.
+        """
+        log = logger.bind(msg_id=msg.message_id, stage=2)
+        if not aclient:
+            log.error("OpenAI client is not available.")
+            return ValidationResult(status=ValidationStatus.ERROR, reason="Client not initialized")
+
+        try:
+            AIAgentService.increment_request_count()
+            log.info("Sending message to AI Agent for validation (Stage 2)...")
+
+            lead_details: StageTwoResult = await aclient.chat.completions.create(
+                # --- ВИКОРИСТОВУЄМО НАЛАШТУВАННЯ З КОНФІГУ ---
+                model=self._config_stage_two.model,
+                response_model=StageTwoResult,
+                messages=[
+                    {"role": "system", "content": self._config_stage_two.system_prompt},
+                    {"role": "user", "content": f"Analyze this message:\n---\n{msg.content}\n---"},
+                ],
+                max_retries=self._config_stage_two.max_retries,
+                temperature=self._config_stage_two.temperature,
             )
 
             status = self._score_to_status(lead_details.confidence, lead_details.is_lead)
-            log.debug("Successfully validated message", status=status.name, score=lead_details.confidence)
+            log.debug("Stage 2 validation successful", status=status.name, score=lead_details.confidence)
 
-            return Validation(
+            return ValidationResult(
                 status=status,
                 score=lead_details.confidence,
                 reason=lead_details.summary,
                 lead_type=lead_details.lead_type,
                 extracted_tech_stack=lead_details.tech_stack,
             )
-
-        except RateLimitError as e:
-            log.warning("OpenAI rate limit exceeded.", error=str(e))
-            return Validation(status=ValidationStatus.ERROR, reason="Rate limit exceeded")
-        except APITimeoutError as e:
-            log.warning("OpenAI request timed out.", error=str(e))
-            return Validation(status=ValidationStatus.ERROR, reason="API timeout")
-        except APIError as e:
-            log.error("OpenAI API error.", code=e.code, message=str(e))
-            return Validation(status=ValidationStatus.ERROR, reason=f"API error: {e.code}")
+        except (RateLimitError, APITimeoutError, APIError) as e:
+            log.warning(f"OpenAI API error during Stage 2: {type(e).__name__}")
+            return ValidationResult(status=ValidationStatus.ERROR, reason=f"API error: {str(e)}")
         except Exception as e:
-            log.exception("Unexpected error in AI Agent.", error_type=type(e).__name__)
-            return Validation(status=ValidationStatus.ERROR, reason="Agent processing failed")
+            log.exception("Unexpected error in AI Agent (Stage 2).")
+            return ValidationResult(status=ValidationStatus.ERROR, reason="Agent processing failed")

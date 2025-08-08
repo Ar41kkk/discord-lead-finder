@@ -2,8 +2,8 @@
 
 import streamlit as st
 import pandas as pd
-from ..constants import AI_QUALIFIED_STATUSES  # <-- Новий імпорт
-from ..plotting import create_bar_chart  # <-- Новий імпорт
+from ..constants import AI_QUALIFIED_STATUSES
+from ..plotting import create_bar_chart
 
 
 def display_tab(df):
@@ -19,9 +19,11 @@ def display_tab(df):
         st.info("Не знайдено можливостей зі спрацюванням по ключовому слову.")
         return
 
+    # --- ОНОВЛЕНА ЛОГІКА ---
+    # Кваліфіковані ліди рахуються за результатами другого етапу
     keyword_stats = keyword_df.groupby('keyword_trigger').agg(
         mentions=('keyword_trigger', 'count'),
-        ai_qualified=('ai_status', lambda x: x.isin(AI_QUALIFIED_STATUSES).sum())
+        ai_qualified=('ai_stage_two_status', lambda x: x.isin(AI_QUALIFIED_STATUSES).sum())
     ).reset_index()
 
     keyword_stats['conversion_rate'] = (keyword_stats['ai_qualified'] / keyword_stats['mentions']) * 100
@@ -30,7 +32,6 @@ def display_tab(df):
     col1, col2 = st.columns([2, 3])
     with col1:
         st.subheader("Найефективніші ключові слова")
-        # Передаємо DataFrame в нашу нову функцію
         create_bar_chart(keyword_stats.nlargest(15, 'ai_qualified'), x_col='ai_qualified',
                          y_col='keyword_trigger', title="Топ-15 слів за к-стю лідів",
                          x_label="К-сть кваліфікованих лідів", y_label="Ключове слово")

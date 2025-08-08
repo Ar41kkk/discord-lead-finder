@@ -16,11 +16,12 @@ def display_tab(df):
 
     st.markdown(f"Знайдено **{len(approved_df)}** схвалених лідів.")
 
-    # Використовуємо st.data_editor для можливості редагування в майбутньому
+    # --- ОНОВЛЕНІ КОЛОНКИ ---
     st.dataframe(
         approved_df[[
-            'message_timestamp', 'server_name', 'channel_name', 'author_name',
-            'ai_status', 'ai_score', 'manual_status', 'message_content', 'message_url'
-        ]],
+            'message_timestamp', 'server_name', 'channel_name', 'author_name', 'bot_user_name',
+            'ai_stage_one_status', 'ai_stage_two_status', 'ai_stage_two_score',
+            'manual_status', 'message_content', 'message_url'
+        ]],  # <-- Додано 'bot_user_name'
         use_container_width=True, height=600, hide_index=True
     )

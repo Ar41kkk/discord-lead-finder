@@ -6,40 +6,62 @@ import plotly.express as px
 import plotly.graph_objects as go
 from ..constants import AI_QUALIFIED_STATUSES, MANUAL_APPROVED_STATUS
 
+
 def display_tab(df):
     """Відображає вкладку аналізу продуктивності AI."""
     st.header("🧠 Аналіз Продуктивності AI-агента")
 
     col1, col2 = st.columns(2)
-    # ... (код для кругової діаграми та гістограми залишається без змін) ...
     with col1:
-        st.subheader("Розподіл статусів від AI")
-        status_counts = df['ai_status'].value_counts()
-        fig_status_pie = px.pie(values=status_counts.values, names=status_counts.index, color_discrete_sequence=px.colors.sequential.RdBu)
-        st.plotly_chart(fig_status_pie, use_container_width=True)
+        st.subheader("Розподіл статусів від AI (Етап 2)")
+        # Використовуємо ai_stage_two_status для фінальних вердиктів
+        status_counts = df[df['ai_stage_two_status'] != 'N/A']['ai_stage_two_status'].value_counts()
+        if not status_counts.empty:
+            fig_status_pie = px.pie(values=status_counts.values, names=status_counts.index,
+                                    color_discrete_sequence=px.colors.sequential.RdBu)
+            st.plotly_chart(fig_status_pie, use_container_width=True)
+        else:
+            st.info("Немає даних другого етапу для побудови діаграми.")
+
     with col2:
-        st.subheader("Розподіл впевненості AI (Score)")
-        fig_score_hist = px.histogram(df, x="ai_score", nbins=20, title="Частота score від 0.0 до 1.0")
-        st.plotly_chart(fig_score_hist, use_container_width=True)
+        st.subheader("Розподіл впевненості AI (Score, Етап 2)")
+        # Використовуємо ai_stage_two_score
+        score_df = df[df['ai_stage_two_score'] > 0]
+        if not score_df.empty:
+            fig_score_hist = px.histogram(score_df, x="ai_stage_two_score", nbins=20,
+                                          title="Частота score від 0.0 до 1.0")
+            st.plotly_chart(fig_score_hist, use_container_width=True)
+        else:
+            st.info("Немає даних другого етапу для побудови гістограми.")
 
     st.markdown("---")
     st.subheader("Матриця невідповідностей та Метрики Якості")
 
-    analysis_df = df[df['manual_status'].isin([MANUAL_APPROVED_STATUS, 'rejected'])].copy() # Аналізуємо тільки ті, де є ручна оцінка
+    # Аналізуємо тільки ті, де є ручна оцінка
+    analysis_df = df[df['manual_status'].isin([MANUAL_APPROVED_STATUS, 'rejected'])].copy()
 
     if analysis_df.empty:
-        st.warning("Недостатньо даних з ручною оцінкою ('approved'/'rejected') для побудови матриці та розрахунку метрик.")
+        st.warning(
+            "Недостатньо даних з ручною оцінкою ('approved'/'rejected') для побудови матриці та розрахунку метрик.")
         return
 
-    analysis_df['ai_decision'] = analysis_df['ai_status'].apply(lambda x: 'Кваліфіковано' if x in AI_QUALIFIED_STATUSES else 'Відхилено')
-    analysis_df['manual_decision'] = analysis_df['manual_status'].apply(lambda x: 'Підтверджено' if x == MANUAL_APPROVED_STATUS else 'Відхилено')
+    # --- ОНОВЛЕНА ЛОГІКА ---
+    # Рішення AI базується на результаті другого етапу
+    analysis_df['ai_decision'] = analysis_df['ai_stage_two_status'].apply(
+        lambda x: 'Кваліфіковано' if x in AI_QUALIFIED_STATUSES else 'Відхилено')
+    analysis_df['manual_decision'] = analysis_df['manual_status'].apply(
+        lambda x: 'Підтверджено' if x == MANUAL_APPROVED_STATUS else 'Відхилено')
 
-    confusion_matrix = pd.crosstab(analysis_df['manual_decision'], analysis_df['ai_decision'], rownames=['Рішення людини'], colnames=['Рішення AI'])
+    confusion_matrix = pd.crosstab(analysis_df['manual_decision'], analysis_df['ai_decision'],
+                                   rownames=['Рішення людини'], colnames=['Рішення AI'])
 
     # Розрахунок метрик
-    tp = confusion_matrix.loc['Підтверджено', 'Кваліфіковано'] if ('Підтверджено' in confusion_matrix.index and 'Кваліфіковано' in confusion_matrix.columns) else 0
-    fp = confusion_matrix.loc['Відхилено', 'Кваліфіковано'] if ('Відхилено' in confusion_matrix.index and 'Кваліфіковано' in confusion_matrix.columns) else 0
-    fn = confusion_matrix.loc['Підтверджено', 'Відхилено'] if ('Підтверджено' in confusion_matrix.index and 'Відхилено' in confusion_matrix.columns) else 0
+    tp = confusion_matrix.loc['Підтверджено', 'Кваліфіковано'] if (
+                'Підтверджено' in confusion_matrix.index and 'Кваліфіковано' in confusion_matrix.columns) else 0
+    fp = confusion_matrix.loc['Відхилено', 'Кваліфіковано'] if (
+                'Відхилено' in confusion_matrix.index and 'Кваліфіковано' in confusion_matrix.columns) else 0
+    fn = confusion_matrix.loc['Підтверджено', 'Відхилено'] if (
+                'Підтверджено' in confusion_matrix.index and 'Відхилено' in confusion_matrix.columns) else 0
 
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0

@@ -1,14 +1,16 @@
 # src/dashboard/pages/tab_community_analysis.py
 
 import streamlit as st
-from ..constants import AI_QUALIFIED_STATUSES # <-- Новий імпорт
-from ..plotting import create_bar_chart # <-- Новий імпорт
+from ..constants import AI_QUALIFIED_STATUSES
+from ..plotting import create_bar_chart
 
 def display_tab(df):
     """Відображає вкладку аналізу спільноти та користувачів."""
     st.header("👨‍👩‍👧‍👦 Аналіз Спільноти та Джерел")
 
-    qualified_df = df[df['ai_status'].isin(AI_QUALIFIED_STATUSES)].copy()
+    # --- ОНОВЛЕНА ЛОГІКА ---
+    # Відбираємо кваліфіковані ліди за результатами другого етапу
+    qualified_df = df[df['ai_stage_two_status'].isin(AI_QUALIFIED_STATUSES)].copy()
     if qualified_df.empty:
         st.info("Не знайдено кваліфікованих лідів за обраний період.")
         return

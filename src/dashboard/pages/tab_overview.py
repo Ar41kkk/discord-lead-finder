@@ -1,40 +1,56 @@
-# src/dashboard/pages/tab_overview.py
-
 import streamlit as st
 from ..constants import AI_QUALIFIED_STATUSES
 
+
 def display_tab(df):
     """Відображає головну вкладку з ключовими показниками."""
-    st.header("📊 Головні Показники (Overview)")
+    st.subheader("📊 Ключові Показники")
 
-    # Розраховуємо ключові метрики
+    if df.empty:
+        st.info("Немає даних для відображення за обраний період.")
+        return
+
+    # --- 1. Розрахунок всіх метрик ---
     total_opportunities = len(df)
-    ai_qualified_df = df[df['ai_status'].isin(AI_QUALIFIED_STATUSES)]
+    keyword_triggers = df['keyword_trigger'].notna().sum()
+
+    ai_qualified_df = df[df['ai_stage_two_status'].isin(AI_QUALIFIED_STATUSES)]
+    ai_qualified_count = len(ai_qualified_df)
+
     manual_approved_count = len(df[df['manual_status'] == 'approved'])
 
-    # Конверсія
-    ai_conversion_rate = (len(ai_qualified_df) / total_opportunities) * 100 if total_opportunities > 0 else 0
+    # Розрахунок конверсій
+    keyword_conversion = (ai_qualified_count / keyword_triggers) * 100 if keyword_triggers > 0 else 0
+    manual_conversion = (manual_approved_count / ai_qualified_count) * 100 if ai_qualified_count > 0 else 0
 
-    # Топ-3 ключових слова
-    top_keywords = df.dropna(subset=['keyword_trigger'])['keyword_trigger'].value_counts().nlargest(3)
+    # --- 2. Покращене відображення (UI/UX) ---
+    st.markdown("##### Загальна Воронка")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Всього можливостей", total_opportunities)
+    col2.metric("Спрацювало за ключем", keyword_triggers)
+    col3.metric("Кваліфіковано AI (Етап 2)", ai_qualified_count)
+    col4.metric("Підтверджено Вручну", manual_approved_count)
 
-    # Розміщуємо метрики в колонках
-    col1, col2, col3 = st.columns(3)
+    st.divider()
 
-    with col1:
-        st.metric(label="Всього Можливостей", value=f"{total_opportunities}")
+    st.markdown("##### Показники Ефективності")
+    kpi1, kpi2 = st.columns(2)
+    kpi1.metric(
+        "Конверсія з Ключового Слова в AI Ліда",
+        f"{keyword_conversion:.1f}%",
+        help="Який відсоток повідомлень, знайдених за ключовими словами, AI вважає якісними лідами."
+    )
+    kpi2.metric(
+        "Конверсія з AI Ліда в Підтверджені",
+        f"{manual_conversion:.1f}%",
+        help="Який відсоток лідів, кваліфікованих AI, ви підтвердили вручну."
+    )
 
-    with col2:
-        st.metric(label="Кваліфіковано AI", value=f"{len(ai_qualified_df)}")
-        st.metric(label="Конверсія AI", value=f"{ai_conversion_rate:.1f}%")
+    st.divider()
 
-    with col3:
-        st.metric(label="Підтверджено Вручну", value=f"{manual_approved_count}")
-
-    st.markdown("---")
-
-    # Виводимо додаткову корисну інформацію
+    # --- 3. Додаткова інформація ---
     st.subheader("Найпопулярніші Ключові Слова")
+    top_keywords = df.dropna(subset=['keyword_trigger'])['keyword_trigger'].value_counts().nlargest(5)
     if not top_keywords.empty:
         st.table(top_keywords)
     else:

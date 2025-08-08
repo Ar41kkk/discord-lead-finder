@@ -1,11 +1,11 @@
-# src/dkh/application/services/message_recorder.py
+# src/application/services/message_recorder.py
 import asyncio
 from typing import List
 import structlog
 
 from config import settings
 from database.storage import DatabaseStorage
-from domain.models import Message, Validation, MessageOpportunity, ValidationStatus
+from domain.models import MessageOpportunity, ValidationStatus
 from domain.ports import OpportunitySink
 
 logger = structlog.get_logger(__name__)
@@ -14,31 +14,31 @@ logger = structlog.get_logger(__name__)
 class MessageRecorder:
     """
     Відповідає за фіналізацію обробки: збереження в БД та відправку в зовнішні системи.
-    - `record`: для динамічного збереження (режим 'live').
-    - `record_batch`: для пакетного збереження (режим 'backfill').
     """
 
     def __init__(self, db_storage: DatabaseStorage, sinks: List[OpportunitySink]):
         self._db = db_storage
         self._sinks = sinks
 
-    async def record(self, bot_id: str, message: Message, validation: Validation, source_mode: str):
+    async def record(self, opportunity: MessageOpportunity, source_mode: str):
         """
-        Зберігає ОДНУ успішно валідовану можливість. Використовується в 'live' режимі.
+        Зберігає ОДНУ можливість. Використовується в 'live' режимі.
         """
+        final_status = (opportunity.stage_two_validation.status
+                        if opportunity.stage_two_validation
+                        else opportunity.stage_one_validation.status)
+
         log = logger.bind(
-            msg_id=message.message_id,
-            url=message.jump_url,
-            status=validation.status.name
+            msg_id=opportunity.message.message_id,
+            url=opportunity.message.jump_url,
+            status=final_status.name
         )
         log.debug("Recording opportunity...")
 
-        opportunity = MessageOpportunity(message=message, validation=validation)
-
-        # Крок 1: Завжди зберігаємо в базу даних
+        # --- ОНОВЛЕНИЙ ВИКЛИК ---
+        # Тепер передаємо лише 'opportunity' та 'source_mode'
         saved_record = await self._db.save_opportunity(
-            message_data=opportunity.message,
-            validation_data=opportunity.validation,
+            opportunity=opportunity,
             source_mode=source_mode,
         )
 
@@ -48,15 +48,14 @@ class MessageRecorder:
 
         log.debug("Opportunity successfully saved to database.")
 
-        # Крок 2: Перевіряємо, чи потрібно записувати в зовнішні системи (sinks)
         write_mode = settings.google_sheet.write_mode
         if write_mode == 'qualified':
-            is_qualified = validation.status in {ValidationStatus.RELEVANT, ValidationStatus.POSSIBLY_RELEVANT}
+            is_qualified = (opportunity.stage_two_validation is not None and
+                            opportunity.stage_two_validation.status in {ValidationStatus.RELEVANT, ValidationStatus.POSSIBLY_RELEVANT})
             if not is_qualified:
                 log.debug("Skipping sinks write for non-qualified lead.")
                 return
 
-        # Крок 3: Якщо перевірка пройдена, асинхронно зберігаємо в усі sinks
         if not self._sinks:
             return
 
@@ -83,15 +82,14 @@ class MessageRecorder:
         log.info("Starting batch recording.")
 
         # Крок 1: Пакетне збереження в базу даних
-        saved_count = await self._db.save_opportunities_batch(opportunities, source_mode)
+        saved_count = await self._db.save_opportunities_batch(opportunities, 0, "Backfill-Client", source_mode)
         log.info("Batch save to database complete.", new_records=saved_count)
-
         # Крок 2: Відфільтровуємо, що писати в sinks
         sinks_opportunities = opportunities
         if settings.google_sheet.write_mode == 'qualified':
             sinks_opportunities = [
                 opp for opp in opportunities
-                if opp.validation.status in {ValidationStatus.RELEVANT, ValidationStatus.POSSIBLY_RELEVANT}
+                if opp.stage_two_validation and opp.stage_two_validation.status in {ValidationStatus.RELEVANT, ValidationStatus.POSSIBLY_RELEVANT}
             ]
             log.info("Filtered for sinks.", qualified_count=len(sinks_opportunities))
 
@@ -106,7 +104,6 @@ class MessageRecorder:
 
         for sink, result in zip(self._sinks, results):
             if isinstance(result, Exception):
-                # ✅ Додаємо traceback до логу помилки
                 log.exception(
                     f'Failed to save opportunity batch to sink',
                     sink=type(sink).__name__,

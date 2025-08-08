@@ -1,4 +1,4 @@
-# src/dkh/domain/models.py
+# src/domain/models.py
 from datetime import datetime
 from enum import Enum, auto
 from typing import Optional, List
@@ -19,7 +19,6 @@ class Message(BaseModel):
     Представляє ключову інформацію про одне повідомлення з Discord.
     Це чиста структура даних, незалежна від бібліотеки Discord.
     """
-
     message_id: int
     channel_id: int
     channel_name: str
@@ -33,11 +32,10 @@ class Message(BaseModel):
     keyword: Optional[str] = None
 
 
-class Validation(BaseModel):
+class ValidationResult(BaseModel):
     """
-    Результат валідації одного повідомлення.
+    Базова модель для результату одного етапу валідації.
     """
-
     status: ValidationStatus
     score: float = 0.0
     reason: Optional[str] = None
@@ -47,9 +45,13 @@ class Validation(BaseModel):
 
 class MessageOpportunity(BaseModel):
     """
-    Об'єднує повідомлення та результат його валідації,
+    Об'єднує повідомлення та результати його валідації,
     представляючи знайдену "можливість".
     """
-
     message: Message
-    validation: Validation
+    stage_one_validation: ValidationResult
+    stage_two_validation: Optional[ValidationResult] = None
+
+    # --- НОВІ ПОЛЯ ---
+    bot_id: Optional[int] = None
+    bot_name: Optional[str] = None

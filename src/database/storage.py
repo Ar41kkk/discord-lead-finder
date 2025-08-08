@@ -1,105 +1,106 @@
-# database/storage.py
+# src/database/storage.py
 
 from datetime import datetime
 from typing import Optional, List
 
 from tortoise.exceptions import IntegrityError
-
-from domain.models import Message as PydanticMessage, Validation as PydanticValidation, MessageOpportunity
-from .models import Opportunity, ValidationStatus
+from domain.models import MessageOpportunity
+from .models import Opportunity, DiscordAccount, Server, Channel, Author
 
 
 class DatabaseStorage:
     """
-    Інкапсулює всю логіку взаємодії з базою даних.
+    Інкапсулює всю логіку взаємодії з базою даних, включаючи нормалізацію.
     """
 
     async def save_opportunity(
             self,
-            message_data: PydanticMessage,
-            validation_data: PydanticValidation,
+            opportunity: MessageOpportunity,
             source_mode: str,
     ) -> Optional[Opportunity]:
         """
-        Зберігає ОДНУ можливість в одній транзакції.
+        Зберігає ОДНУ можливість, "розумно" створюючи або знаходячи пов'язані сутності.
         """
         try:
-            opportunity = await Opportunity.create(
-                message_url=message_data.jump_url,
-                server_name=message_data.guild_name,
-                channel_id=message_data.channel_id,
-                channel_name=message_data.channel_name,
-                message_content=message_data.content,
-                message_timestamp=message_data.timestamp,
-                author_id=message_data.author_id,
-                author_name=message_data.author_name,
-                keyword_trigger=message_data.keyword,
-                ai_status=validation_data.status.value,  # Краще використовувати .value для надійності
-                ai_score=validation_data.score,
-                ai_lead_type=validation_data.lead_type,
-                ai_reason=validation_data.reason,
+            # Тепер беремо дані про бота з об'єкта opportunity
+            account, _ = await DiscordAccount.get_or_create(id=opportunity.bot_id,
+                                                            defaults={"name": opportunity.bot_name})
+
+            server = None
+            if opportunity.message.guild_id and opportunity.message.guild_name:
+                server, _ = await Server.get_or_create(id=opportunity.message.guild_id,
+                                                       defaults={"name": opportunity.message.guild_name})
+
+            channel, _ = await Channel.get_or_create(
+                id=opportunity.message.channel_id,
+                defaults={"name": opportunity.message.channel_name, "server": server}
+            )
+
+            author, _ = await Author.get_or_create(id=opportunity.message.author_id,
+                                                   defaults={"name": opportunity.message.author_name})
+
+            db_opportunity = await Opportunity.create(
+                message_url=opportunity.message.jump_url,
+                message_content=opportunity.message.content,
+                message_timestamp=opportunity.message.timestamp,
+                keyword_trigger=opportunity.message.keyword,
+
+                # Посилання на пов'язані об'єкти
+                server=server,
+                channel=channel,
+                author=author,
+                discovered_by=account,
+
+                # Результати AI
+                ai_stage_one_status=opportunity.stage_one_validation.status.value,
+                ai_stage_one_score=opportunity.stage_one_validation.score,
+                ai_stage_one_reason=opportunity.stage_one_validation.reason,
+                ai_stage_two_status=opportunity.stage_two_validation.status.value if opportunity.stage_two_validation else None,
+                ai_stage_two_score=opportunity.stage_two_validation.score if opportunity.stage_two_validation else None,
+                ai_stage_two_lead_type=opportunity.stage_two_validation.lead_type if opportunity.stage_two_validation else None,
+                ai_stage_two_reason=opportunity.stage_two_validation.reason if opportunity.stage_two_validation else None,
+
+                manual_status='n/a',
                 source_mode=source_mode,
             )
-            return opportunity
+            return db_opportunity
         except IntegrityError:
             return None
         except Exception as e:
             print(f"Помилка при збереженні в БД: {e}")
             return None
 
-    # --- ✅ НОВИЙ МЕТОД ---
     async def save_opportunities_batch(
             self,
             opportunities: List[MessageOpportunity],
+            bot_id: int,
+            bot_name: str,
             source_mode: str,
     ) -> int:
         """
-        Зберігає ПАКЕТ можливостей, використовуючи bulk_create для максимальної ефективності.
-        Використовує 'ignore_conflicts', щоб уникнути помилок з дублікатами.
-        Повертає кількість реально створених записів.
+        Зберігає ПАКЕТ можливостей.
+        Примітка: для кращої продуктивності в майбутньому цей метод можна оптимізувати,
+        щоб він робив менше запитів до БД.
         """
-        if not opportunities:
-            return 0
-
-        db_objects = [
-            Opportunity(
-                message_url=opp.message.jump_url,
-                server_name=opp.message.guild_name,
-                channel_id=opp.message.channel_id,
-                channel_name=opp.message.channel_name,
-                message_content=opp.message.content,
-                message_timestamp=opp.message.timestamp,
-                author_id=opp.message.author_id,
-                author_name=opp.message.author_name,
-                keyword_trigger=opp.message.keyword,
-                ai_status=opp.validation.status.value,
-                ai_score=opp.validation.score,
-                ai_lead_type=opp.validation.lead_type,
-                ai_reason=opp.validation.reason,
-                source_mode=source_mode,
-            )
-            for opp in opportunities
-        ]
-
-        try:
-            # ignore_conflicts=True працює на рівні БД для полів з unique=True
-            created_records = await Opportunity.bulk_create(db_objects, ignore_conflicts=True)
-            return len(created_records)
-        except Exception as e:
-            # Логуємо будь-які інші помилки
-            print(f"Помилка при пакетному збереженні в БД: {e}")
-            return 0
+        saved_count = 0
+        for opp in opportunities:
+            saved = await self.save_opportunity(opp, bot_id, bot_name, source_mode)
+            if saved:
+                saved_count += 1
+        return saved_count
 
     async def get_latest_message_timestamp(self, channel_id: int) -> Optional[datetime]:
         """
         Знаходить дату ОСТАННЬОГО обробленого повідомлення для конкретного каналу.
         """
         latest_opportunity = await Opportunity.filter(channel_id=channel_id).order_by("-message_timestamp").first()
+        if latest_opportunity:
+            return latest_opportunity.message_timestamp
+        return None
 
     async def get_existing_urls(self, message_urls: List[str]) -> set[str]:
         """
         Приймає список URL і повертає множину тих URL, які ВЖЕ існують у базі.
-        Це ключовий метод для уникнення повторної обробки.
         """
         if not message_urls:
             return set()

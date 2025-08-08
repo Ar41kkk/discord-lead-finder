@@ -3,6 +3,7 @@
 import streamlit as st
 from ..constants import AI_QUALIFIED_STATUSES, COST_PER_AI_REQUEST_USD
 
+
 def display_tab(df):
     """Відображає вкладку аналізу витрат."""
     st.header("💰 Аналіз Витрат та Ефективності")
@@ -13,7 +14,10 @@ def display_tab(df):
 
     # --- Розрахунок метрик ---
     total_requests = len(df)
-    ai_qualified_df = df[df['ai_status'].isin(AI_QUALIFIED_STATUSES)]
+
+    # --- ВИПРАВЛЕННЯ ТУТ ---
+    # Використовуємо нову колонку 'ai_stage_two_status'
+    ai_qualified_df = df[df['ai_stage_two_status'].isin(AI_QUALIFIED_STATUSES)]
     total_qualified_leads = len(ai_qualified_df)
 
     # Загальні витрати

@@ -4,7 +4,6 @@ import streamlit as st
 import pandas as pd
 from pathlib import Path
 
-# Імпортуємо наші власні модулі
 from dashboard.data import load_data
 from dashboard.pages import (
     page_triage,
@@ -14,27 +13,22 @@ from dashboard.pages import (
 )
 
 def main():
-    """Основна функція, що збирає та відображає дашборд."""
-    st.set_page_config(page_title="Lead Management Platform", page_icon="🚀", layout="wide")
+    st.set_page_config(
+        page_title="Lead Management Platform",
+        page_icon="🚀",
+        layout="wide",
+    )
 
-    # --- ЗАВАНТАЖЕННЯ ДАНИХ ТА КОНФІГУРАЦІЇ ---
+    # --- 1) Завантажуємо всю таблицю opportunities з БД ---
     try:
-        project_root = Path(__file__).resolve().parent.parent
-        db_path = project_root / "db.sqlite3"
-        config_path = project_root / "config.yaml"
-        df_full = load_data(db_path)
+        df_full = load_data()
     except Exception as e:
         st.error(f"Помилка при ініціалізації додатку: {e}")
         st.stop()
 
-    if df_full.empty:
-        st.warning("Таблиця 'opportunities' порожня. Деякі функції аналітики можуть бути недоступні.")
-
-    # --- БІЧНА ПАНЕЛЬ: НАВІГАЦІЯ ТА ФІЛЬТРИ ---
+    # --- 2) Бічна панель: навігація + фільтри ---
     with st.sidebar:
         st.title("Lead Gen Platform")
-
-        # --- Навігаційне меню ---
         page = st.radio(
             "Навігація",
             ["📬 Сортування", "📈 Аналітика", "⚙️ Конфігурація", "🤖 Керування Ботом"],
@@ -42,33 +36,58 @@ def main():
         )
         st.divider()
 
-        # --- Глобальні фільтри ---
-        st.header("Глобальні Фільтри")
-        min_date = df_full['message_timestamp'].min().date() if not df_full.empty else pd.Timestamp.now().date()
-        max_date = df_full['message_timestamp'].max().date() if not df_full.empty else pd.Timestamp.now().date()
+        # Фільтр за акаунтом
+        if not df_full.empty and "bot_user_name" in df_full.columns:
+            bots = df_full['bot_user_name'].dropna().unique().tolist()
+            accounts_list = ["Всі акаунти"] + sorted(bots)
+        else:
+            accounts_list = ["Всі акаунти"]
+        selected_account = st.selectbox("Акаунт бота", accounts_list)
+
+        # Фільтр за датою
+        if not df_full.empty:
+            min_date = df_full['message_timestamp'].min().date()
+            max_date = df_full['message_timestamp'].max().date()
+        else:
+            today = pd.Timestamp.utcnow().date()
+            min_date = max_date = today
+
         selected_date_range = st.date_input(
-            "Діапазон дат", [min_date, max_date], min_value=min_date, max_value=max_date
+            "Діапазон дат",
+            [min_date, max_date],
+            min_value=min_date,
+            max_value=max_date
         )
 
-    # --- ФІЛЬТРАЦІЯ ДАНИХ ---
-    if len(selected_date_range) == 2 and not df_full.empty:
-        start_date = pd.to_datetime(selected_date_range[0]).tz_localize('UTC')
-        end_date = pd.to_datetime(selected_date_range[1]).tz_localize('UTC').replace(hour=23, minute=59, second=59)
-        filtered_df = df_full[
-            (df_full['message_timestamp'] >= start_date) & (df_full['message_timestamp'] <= end_date)
-            ].copy()
-    else:
-        filtered_df = df_full.copy()
+    # --- 3) Фільтруємо DataFrame відповідно до вибору ---
+    df = df_full.copy()
+    if not df.empty:
+        # по датах
+        start = pd.to_datetime(selected_date_range[0]).tz_localize("UTC")
+        end = pd.to_datetime(selected_date_range[1]).tz_localize("UTC").replace(
+            hour=23, minute=59, second=59
+        )
+        df = df[(df['message_timestamp'] >= start) & (df['message_timestamp'] <= end)]
 
-    # --- ВІДОБРАЖЕННЯ ОБРАНОЇ СТОРІНКИ ---
+        # по акаунту
+        if selected_account != "Всі акаунти":
+            df = df[df['bot_user_name'] == selected_account]
+
+    # --- 4) Рендер сторінки за вибором ---
     if page == "📬 Сортування":
-        page_triage.display_page(filtered_df, db_path)
+        # Тепер display_page приймає лише DataFrame
+        page_triage.display_page(df)
+
     elif page == "📈 Аналітика":
-        page_analytics.display_page(filtered_df)
+        page_analytics.display_page(df)
+
     elif page == "⚙️ Конфігурація":
+        config_path = Path(__file__).resolve().parents[1] / "config.yaml"
         page_config.display_page(config_path)
-    elif page == "🤖 Керування Ботом":
-        page_bot_control.display_page()
+
+    else:  # "🤖 Керування Ботом"
+        # Для бот-контролю передаємо повний набір даних
+        page_bot_control.display_page(df_full)
 
 
 if __name__ == "__main__":

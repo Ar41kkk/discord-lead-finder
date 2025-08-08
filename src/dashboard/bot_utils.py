@@ -1,71 +1,88 @@
-# src/dashboard/bot_utils.py
+# dashboard/bot_utils.py
 
-import streamlit as st
 import os
+import signal
 import subprocess
+import sys
+import time
 import psutil
 from pathlib import Path
-import sys
+from typing import Optional
 
-# Визначаємо шляхи відносно цього файлу
+# === ЄДИНЕ ВИЗНАЧЕННЯ PROJECT_ROOT ===
+# Ми припускаємо, що бот_utils.py лежить у src/dashboard/
+# Тож .parent.parent.parent виведе на корінь проєкту.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-PID_FILE = PROJECT_ROOT / ".bot.pid"
-VENV_PYTHON = sys.executable
-CLI_SCRIPT = PROJECT_ROOT / "src" / "interface" / "cli.py"
 
-def get_bot_status():
-    """Перевіряє статус бота за PID файлом."""
-    if not PID_FILE.exists():
-        return {"status": "Stopped", "pid": None}
+PID_DIR    = PROJECT_ROOT / ".bot_pids"
+STATUS_DIR = PROJECT_ROOT / ".bot_statuses"
+LOGS_DIR   = PROJECT_ROOT / "logs"
 
+# Створюємо каталоги, якщо їх нема
+for d in (PID_DIR, STATUS_DIR, LOGS_DIR):
+    d.mkdir(exist_ok=True)
+
+def pid_file(account: str) -> Path:
+    return PID_DIR / f"{account}.pid"
+
+def status_file(account: str) -> Path:
+    return STATUS_DIR / f"{account}.status"
+
+def log_file(account: str) -> Path:
+    return LOGS_DIR / f"bot_{account}.log"
+
+def get_status(account: str) -> str:
+    """
+    - "Stopped"  — нема PID або процес помер
+    - "Launching"— є PID, але ще нема статус-файла
+    - "Running"  — є PID і є статус-файл
+    - "Error"    — якщо щось пішло не так
+    """
+    p = pid_file(account)
+    if not p.exists():
+        return "Stopped"
     try:
-        with open(PID_FILE, "r") as f:
-            pid = int(f.read().strip())
+        pid = int(p.read_text())
+        if not psutil.pid_exists(pid):
+            p.unlink(missing_ok=True)
+            return "Stopped"
+        sf = status_file(account)
+        return "Running" if sf.exists() else "Launching"
+    except Exception:
+        return "Error"
 
-        if psutil.pid_exists(pid):
-            proc = psutil.Process(pid)
-            if 'python' in proc.name().lower() and any('cli.py' in cmd for cmd in proc.cmdline()):
-                 return {"status": "Running", "pid": pid}
-    except (psutil.NoSuchProcess, ValueError, IOError):
-        PID_FILE.unlink(missing_ok=True)
+def start_bot(account: str) -> Optional[int]:
+    """
+    1) Видаляємо старий статус-файл, щоб при наступному get_status було "Launching"
+    2) Запускаємо CLI
+    3) Пишемо PID
+    """
+    sf = status_file(account)
+    sf.unlink(missing_ok=True)
 
-    return {"status": "Stopped", "pid": None}
+    cmd = [sys.executable, "-m", "interface.cli", "live", "--account", account]
+    lf = open(log_file(account), "a", encoding="utf-8")
+    proc = subprocess.Popen(cmd, cwd=PROJECT_ROOT, stdout=lf, stderr=lf)
+    pid_file(account).write_text(str(proc.pid))
+    time.sleep(0.2)
+    return proc.pid
 
-def start_bot():
-    """Запускає процес бота у фоні."""
+def stop_bot(account: str) -> None:
+    """
+    1) Видаляємо статус-файл одразу
+    2) Читаємо PID і слідуємо SIGTERM
+    3) Видаляємо PID-файл
+    """
+    sf = status_file(account)
+    sf.unlink(missing_ok=True)
+
+    p = pid_file(account)
+    if not p.exists():
+        return
     try:
-        creation_flags = 0
-        if sys.platform == "win32":
-            creation_flags = subprocess.CREATE_NO_WINDOW
-
-        env = os.environ.copy()
-        subprocess.Popen(
-            [str(VENV_PYTHON), str(CLI_SCRIPT), "live"],
-            cwd=PROJECT_ROOT, env=env, creationflags=creation_flags
-        )
-        return True
-    except Exception as e:
-        st.error(f"Не вдалося запустити бота: {e}")
-        return False
-
-def stop_bot():
-    """Зупиняє процес бота, читаючи PID з файлу."""
-    status_info = get_bot_status()
-    pid = status_info.get("pid")
-
-    if pid and psutil.pid_exists(pid):
-        try:
-            p = psutil.Process(pid)
-            p.terminate()
-            p.wait(timeout=5)
-            st.toast(f"Процес бота (PID: {pid}) успішно зупинено.")
-        except psutil.TimeoutExpired:
-            p.kill()
-            st.toast(f"Процес бота (PID: {pid}) зупинено примусово.")
-        except psutil.NoSuchProcess:
-            pass
-
-        if PID_FILE.exists():
-            PID_FILE.unlink(missing_ok=True)
-        return True
-    return False
+        pid = int(p.read_text())
+        os.kill(pid, signal.SIGTERM)
+    except Exception:
+        pass
+    finally:
+        p.unlink(missing_ok=True)

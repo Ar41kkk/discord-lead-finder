@@ -13,29 +13,27 @@ from infrastructure.sinks.google_sheet import GoogleSheetSink
 logger = structlog.get_logger(__name__)
 
 
-def bootstrap_live_pipeline() -> MessagePipeline:
+def bootstrap_live_dependencies() -> (MessagePipeline, DatabaseStorage):
     """
-    Створює та налаштовує конвеєр для режиму 'live'.
+    Створює та налаштовує залежності для режиму 'live'.
+    Повертає конвеєр та сховище даних.
     """
-    logger.info("Bootstrapping LIVE mode pipeline...")
+    logger.info("Bootstrapping LIVE mode dependencies...")
 
     sinks = []
     try:
-        # ✅ Спрощений виклик, передаємо лише назву аркуша
-        # має бути
         sink = GoogleSheetSink.create(config=settings.google_sheet,
                                       worksheet_name=settings.google_sheet.live_sheet_name)
         sinks.append(sink)
     except Exception:
-        # Помилка вже залогована всередині .create(), тут можна нічого не робити
         logger.warning("Could not create Google Sheet sink for live mode. Continuing without it.")
 
     db_storage = DatabaseStorage()
     recorder = MessageRecorder(db_storage=db_storage, sinks=sinks)
     pipeline = MessagePipeline(recorder=recorder)
 
-    logger.info("✅ Live mode pipeline bootstrapped.")
-    return pipeline
+    logger.info("✅ Live mode dependencies bootstrapped.")
+    return pipeline, db_storage
 
 
 def bootstrap_backfill_service(client: discord.Client) -> BackfillService:
