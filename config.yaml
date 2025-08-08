@@ -1,232 +1,257 @@
-# Головний конфігураційний файл
-# Налаштування тут можуть бути перевизначені через змінні середовища
-# (напр. export APP_MODE="live")
-
-# Режим роботи: "backfill" (збирає історію) або "live" (слухає нові повідомлення)
-mode: "backfill"
+mode: backfill
 history_days: 7
-
-# --- Загальні налаштування обробки ---
 database:
-  db_url: "sqlite://db.sqlite3" # Шлях до вашої бази даних
-
-# --- ✅ РОЗШИРЕНІ НАЛАШТУВАННЯ АГЕНТА ---
+  db_url: sqlite://db.sqlite3
 openai:
   concurrency: 15
-  model: "gpt-4o-mini"
+  model: gpt-4o-mini
   temperature: 0.0
   timeout: 45
   max_retries: 1
-  system_prompt: |
-    ## Persona & Mission
-    You are "Lead-Extractor-9000", an AI analyst inside a software development agency. Your ONLY purpose is to find valuable business opportunities (leads). Your performance is measured by the quality of leads you provide. Every bad lead is a waste of time and money.
+  system_prompt: '## Persona & Mission
+
+    You are "Lead-Extractor-9000", an AI analyst inside a software development agency.
+    Your ONLY purpose is to find valuable business opportunities (leads). Your performance
+    is measured by the quality of leads you provide. Every bad lead is a waste of
+    time and money.
+
 
     ## The Golden Rule: NEED vs. OFFER
-    Your entire decision-making process is based on one question: Is the user **expressing a NEED for services**, or are they **making an OFFER of their services**?
-    - **NEED (✅ A Lead):** "I'm looking for a Python developer...", "Can someone build an app for me?", "We have a budget for a new website."
-    - **OFFER (❌ NOT a Lead):** "I am a Python developer looking for work.", "Check out my portfolio.", "I can build you an app."
+
+    Your entire decision-making process is based on one question: Is the user **expressing
+    a NEED for services**, or are they **making an OFFER of their services**?
+
+    - **NEED (✅ A Lead):** "I''m looking for a Python developer...", "Can someone
+    build an app for me?", "We have a budget for a new website."
+
+    - **OFFER (❌ NOT a Lead):** "I am a Python developer looking for work.", "Check
+    out my portfolio.", "I can build you an app."
+
     **This is the most critical rule. There are no exceptions.**
 
+
     ## Step-by-Step Analysis Protocol
-    Before providing the final JSON, perform this internal monologue (do not include it in the final output):
-    1.  **Analyze Intent:** Read the message. What is the user's primary goal? Are they asking or telling?
-    2.  **Apply The Golden Rule:** Does this message clearly fall into the NEED or OFFER category?
-    3.  **Check MUST-HAVE Signals:** Does the message contain strong indicators of a lead? (see list below)
-    4.  **Check MUST-REJECT Signals:** Does the message contain signals that disqualify it? (see list below)
-    5.  **Synthesize Conclusion:** Based on the signals, make a final decision and calculate a confidence score. If it's not a lead, the confidence MUST be 0.0.
+
+    Before providing the final JSON, perform this internal monologue (do not include
+    it in the final output):
+
+    1.  **Analyze Intent:** Read the message. What is the user''s primary goal? Are
+    they asking or telling?
+
+    2.  **Apply The Golden Rule:** Does this message clearly fall into the NEED or
+    OFFER category?
+
+    3.  **Check MUST-HAVE Signals:** Does the message contain strong indicators of
+    a lead? (see list below)
+
+    4.  **Check MUST-REJECT Signals:** Does the message contain signals that disqualify
+    it? (see list below)
+
+    5.  **Synthesize Conclusion:** Based on the signals, make a final decision and
+    calculate a confidence score. If it''s not a lead, the confidence MUST be 0.0.
+
     6.  **Extract Data:** If it is a lead, extract all required data points.
 
+
     ---
+
 
     ### ✅ MUST-HAVE Signals (Indicators of a Lead)
-    - **Direct Hiring Language:** Use of phrases like "looking for", "hiring", "need a dev", "paid project", "have a budget".
-    - **Problem Description:** The user describes a complex business problem, not just a simple coding question. They are "stuck" or "struggling" with something that implies a project, not a quick fix.
-    - **Request for Proposal:** Explicit requests for a "quote", "proposal", "estimate", or "commercial offer".
-    - **Project Language:** Mention of building an "MVP", "prototype", "platform", "app", "website".
+
+    - **Direct Hiring Language:** Use of phrases like "looking for", "hiring", "need
+    a dev", "paid project", "have a budget".
+
+    - **Problem Description:** The user describes a complex business problem, not
+    just a simple coding question. They are "stuck" or "struggling" with something
+    that implies a project, not a quick fix.
+
+    - **Request for Proposal:** Explicit requests for a "quote", "proposal", "estimate",
+    or "commercial offer".
+
+    - **Project Language:** Mention of building an "MVP", "prototype", "platform",
+    "app", "website".
+
 
     ### ❌ MUST-REJECT Signals (Disqualifiers)
-    - **Self-Promotion:** Any message where the user talks about their own skills, shares their portfolio/GitHub, or states they are "open for work". **Reject immediately.**
-    - **Simple Technical Questions:** Questions that can likely be answered in a few sentences by another community member (e.g., "How do I fix this CSS error?", "What's the syntax for...").
-    - **Unpaid/Hobby Requests:** Mentions of "for free", "collaboration", "hobby project", "unpaid".
-    - **General Discussion:** Asking for opinions, tutorials, or best practices without a clear business need attached.
+
+    - **Self-Promotion:** Any message where the user talks about their own skills,
+    shares their portfolio/GitHub, or states they are "open for work". **Reject immediately.**
+
+    - **Simple Technical Questions:** Questions that can likely be answered in a few
+    sentences by another community member (e.g., "How do I fix this CSS error?", "What''s
+    the syntax for...").
+
+    - **Unpaid/Hobby Requests:** Mentions of "for free", "collaboration", "hobby project",
+    "unpaid".
+
+    - **General Discussion:** Asking for opinions, tutorials, or best practices without
+    a clear business need attached.
+
 
     ---
 
-    ## Final Output Command
-    After completing your internal analysis, your final and ONLY output MUST be a single, perfectly structured JSON object that validates against the user-provided schema. Do not add any text, explanations, or markdown formatting before or after the JSON object.
-  user_prompt_template: "Analyze this message:\n\n---\n{message}\n---"
 
-# --- Налаштування Discord ---
+    ## Final Output Command
+
+    After completing your internal analysis, your final and ONLY output MUST be a
+    single, perfectly structured JSON object that validates against the user-provided
+    schema. Do not add any text, explanations, or markdown formatting before or after
+    the JSON object.
+
+    '
+  user_prompt_template: 'Analyze this message:
+
+
+    ---
+
+    {message}
+
+    ---'
 discord:
   concurrent_channels: 10
   batch_pause_seconds: 0.5
-  delay_seconds: [0.1, 0.3]
+  delay_seconds:
+  - 0.1
+  - 0.3
   message_page_limit: 100
   max_retries: 5
   track_all_channels: true
-  channel_whitelist: []         # Додайте ID каналів сюди, якщо track_all_channels = false
-
-# --- Налаштування Google Sheets ---
+  channel_whitelist: []
 google_sheet:
-  spreadsheet_id: "14ISINuyVNeu8FBK908W6unARlFrj7fG542JIW_tK8Iw"
-  live_sheet_name: "Live"
-  backfill_sheet_name: "Previous"
-  stats_sheet_name: "Stats"
-  leads_sheet_name: "Leads"
-  # Режим запису в Google Sheets: "all" (всі) або "qualified" (тільки RELEVANT
-  write_mode: "all"
-# --- ✅ НОВИЙ РОЗДІЛ ТУТ ---
-# Налаштування для команди export
+  spreadsheet_id: 14ISINuyVNeu8FBK908W6unARlFrj7fG542JIW_tK8Iw
+  live_sheet_name: Live
+  backfill_sheet_name: Previous
+  stats_sheet_name: Stats
+  leads_sheet_name: Leads
+  write_mode: all
 export:
-  # Словник для красивого відображення статусів
   status_map:
-    RELEVANT: "🔥 Hot Lead"
-    POSSIBLY_RELEVANTE: "💡 Good Lead"
-    POSSIBLY_UNRELEVANT: "🤔 Possible"
-    UNRELEVANT: "❌ Not a Lead"
-    ERROR: "⚠️ Error"
-  # Словник для типів лідів
+    RELEVANT: 🔥 Hot Lead
+    POSSIBLY_RELEVANT: 💡 Good Lead
+    POSSIBLY_UNRELEVANT: 🤔 Possible
+    UNRELEVANT: ❌ Not a Lead
+    ERROR: ⚠️ Error
   lead_type_map:
-    direct_hire: "Direct Hire"
-    project_work: "Project Work"
-    paid_help: "Paid Help"
-    other: "Other"
-  # Заголовки для нового аркуша "Leads"
+    direct_hire: Direct Hire
+    project_work: Project Work
+    paid_help: Paid Help
+    other: Other
   default_header:
-    - "Time"
-    - "Server Name"
-    - "Channel Name"
-    - "Sender Name"
-    - "Message Content"
-    - "OpenAI Status"
-    - "Score"
-    - "Type"
-    - "Manual Status"
-    - "Message Link"
-
-# --- Ключові слова для пошуку бізнес-лідів (v4 - максимальне покриття) ---
+  - Time
+  - Server Name
+  - Channel Name
+  - Sender Name
+  - Message Content
+  - OpenAI Status
+  - Score
+  - Type
+  - Manual Status
+  - Message Link
 keywords:
-  # --- Прямий попит на послуги (максимальна пріоритетність) ---
-  - "looking for"
-  - "we need"
-  - "i need"
-  - "hire"
-  - "hiring"
-  - "paid opportunity"
-  - "paid project"
-  - "paid gig"
-  - "budget for"
-  - "have a budget"
-  - "quote for"
-  - "proposal for"
-  - "need a dev"
-  - "find a dev"
-  - "outsource"
-  - "commercial project"
-  - "contract work"
-
-  # --- Опис проблеми або потреби (широкий пошук) ---
-  - "need help with"
-  - "can someone help"
-  - "struggling with"
-  - "assistance with"
-  - "stuck on"
-  - "issue with"
-  - "problem with"
-  - "any recommendations for"
-  - "guidance on"
-  - "who can"
-  - "need an expert"
-  - "looking for expertise"
-
-  # --- Дієслова, що вказують на роботу ---
-  - "build a"
-  - "create a"
-  - "develop a"
-  - "integrate"
-  - "migration"
-  - "migrating"
-  - "refactor"
-  - "optimize"
-  - "scaling"
-  - "debug"
-  - "maintain"
-  - "update a"
-  - "audit"
-  - "review my code"
-
-  # --- Тип виконавця ---
-  - "developer"
-  - "engineer"
-  - "programmer"
-  - "team"
-  - "agency"
-  - "consultant"
-  - "expert"
-  - "specialist"
-  - "architect"
-  - "full-stack"
-  - "backend"
-  - "frontend"
-  - "devops"
-
-  # --- Тип проекту або продукту ---
-  - "mvp"
-  - "prototype"
-  - "startup"
-  - "platform"
-  - "app"
-  - "application"
-  - "website"
-  - "e-commerce"
-  - "marketplace"
-  - "automation"
-  - "script"
-  - "bot"
-  - "api"
-  - "backend"
-  - "interface"
-
-  # --- Технології та платформи (розширено) ---
-  # Backend
-  - "python"
-  - "node.js"
-  - "java"
-  - "golang"
-  - "rust"
-  - "php"
-  # Frontend
-  - "react"
-  - "vue"
-  - "angular"
-  - "svelte"
-  - "javascript"
-  - "typescript"
-  # Mobile
-  - "swift"
-  - "kotlin"
-  - "flutter"
-  - "react native"
-  # Web3/Blockchain
-  - "solidity"
-  - "smart contract"
-  - "dapp"
-  - "web3"
-  - "blockchain"
-  # Databases
-  - "postgresql"
-  - "mysql"
-  - "mongodb"
-  - "database"
-  # DevOps/Cloud
-  - "aws"
-  - "gcp"
-  - "azure"
-  - "docker"
-  - "kubernetes"
-  - "terraform"
-  # AI/ML
-  - "pytorch"
-  - "tensorflow"
-  - "ai model"
-  - "machine learning"
+- looking for
+- we need
+- i need
+- hire
+- hiring
+- paid opportunity
+- paid project
+- paid gig
+- budget for
+- have a budget
+- quote for
+- proposal for
+- need a dev
+- find a dev
+- outsource
+- commercial project
+- contract work
+- need help with
+- can someone help
+- struggling with
+- assistance with
+- stuck on
+- issue with
+- problem with
+- any recommendations for
+- guidance on
+- who can
+- need an expert
+- looking for expertise
+- build a
+- create a
+- develop a
+- integrate
+- migration
+- migrating
+- refactor
+- optimize
+- scaling
+- debug
+- maintain
+- update a
+- audit
+- review my code
+- developer
+- engineer
+- programmer
+- team
+- agency
+- consultant
+- expert
+- specialist
+- architect
+- full-stack
+- backend
+- frontend
+- devops
+- mvp
+- prototype
+- startup
+- platform
+- app
+- application
+- website
+- e-commerce
+- marketplace
+- automation
+- script
+- bot
+- api
+- backend
+- interface
+- python
+- node.js
+- java
+- golang
+- rust
+- php
+- react
+- vue
+- angular
+- svelte
+- javascript
+- typescript
+- swift
+- kotlin
+- flutter
+- react native
+- solidity
+- smart contract
+- dapp
+- web3
+- blockchain
+- postgresql
+- mysql
+- mongodb
+- database
+- aws
+- gcp
+- azure
+- docker
+- kubernetes
+- terraform
+- pytorch
+- tensorflow
+- ai model
+- machine learning
+log_level: INFO

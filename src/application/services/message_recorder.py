@@ -46,7 +46,7 @@ class MessageRecorder:
             log.warning("Record already exists in DB, skipping further processing.")
             return
 
-        log.info("Opportunity successfully saved to database.")
+        log.debug("Opportunity successfully saved to database.")
 
         # Крок 2: Перевіряємо, чи потрібно записувати в зовнішні системи (sinks)
         write_mode = settings.google_sheet.write_mode

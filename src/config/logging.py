@@ -70,10 +70,10 @@ def configure_logging() -> None:
     # --- ✅ ОСНОВНА ЗМІНА ТУТ ---
     # Встановлюємо вищий рівень логування для сторонніх бібліотек,
     # щоб приховати їхній "шум".
-    #logging.getLogger('discord').setLevel(logging.ERROR)
-    #logging.getLogger('discord.http').setLevel(logging.ERROR)
-    #ogging.getLogger('discord.state').setLevel(logging.ERROR)
-    #logging.getLogger('httpx').setLevel(logging.WARNING)
+    logging.getLogger('discord').setLevel(logging.ERROR)
+    logging.getLogger('discord.http').setLevel(logging.ERROR)
+    logging.getLogger('discord.state').setLevel(logging.ERROR)
+    logging.getLogger('httpx').setLevel(logging.WARNING)
     # --- ✅ ВИПРАВЛЕННЯ: Приглушуємо логер бібліотеки openai ---
     logging.getLogger('openai').setLevel(logging.WARNING)
 

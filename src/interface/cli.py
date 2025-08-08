@@ -4,6 +4,17 @@ import typer
 import structlog
 import discord
 from tortoise import Tortoise
+import os
+import time
+from pathlib import Path
+from dotenv import load_dotenv # <-- НОВИЙ ІМПОРТ
+
+# --- НОВА ЛОГІКА ДЛЯ НАДІЙНОГО ЗАВАНТАЖЕННЯ .ENV ---
+# Визначаємо корінь проекту і примусово завантажуємо змінні з .env файлу.
+# Це гарантує, що токени та ключі будуть доступні, незалежно від способу запуску.
+PROJECT_ROOT_FOR_ENV = Path(__file__).resolve().parent.parent.parent
+load_dotenv(dotenv_path=PROJECT_ROOT_FOR_ENV / ".env")
+
 
 from bootstrap import bootstrap_live_pipeline, bootstrap_backfill_service
 from config import settings, configure_logging
@@ -11,14 +22,18 @@ from config.settings import TORTOISE_CONFIG
 from infrastructure.discord.listener import Listener
 from application.services.sync_service import SyncService
 from application.services.export_service import ExportService
+from utils import get_project_root
 
-# Ініціалізуємо логер та Typer додаток
+# --- ЛОГІКА ДЛЯ КЕРУВАННЯ ---
+PROJECT_ROOT = get_project_root()
+PID_FILE = PROJECT_ROOT / ".bot.pid"
+
 logger = structlog.get_logger(__name__)
 app = typer.Typer(
     help="Інструмент для пошуку лідів у Discord.",
-    # ✅ Додаємо красивіші назви для команд у --help
     context_settings={"help_option_names": ["-h", "--help"]},
 )
+
 
 # --- Уніфікована функція запуску ---
 
@@ -32,7 +47,6 @@ def run_app(mode: str, coro):
     except KeyboardInterrupt:
         logger.warning("Application interrupted by user.")
     except Exception:
-        # ✅ Глобальний обробник непередбачуваних помилок
         logger.critical("Application crashed due to an unhandled exception!", exc_info=True)
 
 
@@ -41,17 +55,35 @@ def run_app(mode: str, coro):
 @app.command()
 def live():
     """Запускає бота в режимі реального часу (live)."""
-    run_app("live", run_live_mode())
+    # Перевіряємо, чи файл PID вже не існує
+    if PID_FILE.exists():
+        logger.error("Файл .bot.pid вже існує. Можливо, бот вже запущений.")
+        return
+
+    try:
+        # Створюємо PID файл одразу при запуску
+        with open(PID_FILE, "w") as f:
+            f.write(str(os.getpid()))
+
+        run_app("live", run_live_mode())
+    finally:
+        # Гарантовано видаляємо PID файл при будь-якому завершенні
+        if PID_FILE.exists():
+            PID_FILE.unlink(missing_ok=True)
+        logger.info("Live-режим зупинено, PID файл очищено.")
+
 
 @app.command()
 def backfill():
     """Запускає бота в режимі збору історії (backfill)."""
     run_app("backfill", run_backfill_mode())
 
+
 @app.command()
 def sync():
     """Синхронізує ручні статуси з 'Leads' назад у базу даних."""
     run_app("sync", run_sync_mode())
+
 
 @app.command()
 def export():
@@ -65,21 +97,27 @@ async def run_with_db(service_coro):
     """Ініціалізує та закриває з'єднання з БД для сервісу."""
     try:
         await Tortoise.init(config=TORTOISE_CONFIG)
-        await Tortoise.generate_schemas() # Безпечно створює таблиці, якщо їх немає
+        await Tortoise.generate_schemas()
         await service_coro
     finally:
         await Tortoise.close_connections()
         logger.info("Database connections closed.")
 
 async def run_live_mode():
+    """Асинхронна логіка для live-режиму."""
     pipeline = bootstrap_live_pipeline()
     client = Listener(
         pipeline_callback=pipeline.process_message,
         track_all_channels=settings.discord.track_all_channels,
         target_channel_ids=settings.discord.channel_whitelist,
     )
-    # ✅ Обгортаємо запуск клієнта, щоб гарантовано закрити з'єднання
-    await run_with_db(client.start(settings.discord_token.get_secret_value()))
+    try:
+        await run_with_db(client.start(settings.discord_token.get_secret_value()))
+    except KeyboardInterrupt:
+        logger.info("Отримано сигнал KeyboardInterrupt для зупинки.")
+    finally:
+        if not client.is_closed():
+            await client.close()
 
 
 class BackfillClient(discord.Client):
@@ -92,7 +130,6 @@ class BackfillClient(discord.Client):
         logger.info("Backfill client is ready.", user=str(self.user))
         try:
             service = bootstrap_backfill_service(self)
-            # ✅ Обгортаємо запуск сервісу
             await run_with_db(service.run())
         except Exception:
             logger.critical("Backfill service failed during execution", exc_info=True)
@@ -112,7 +149,6 @@ async def run_backfill_mode():
     logger.info("Starting backfill client...")
     client = BackfillClient(self_bot=True)
     try:
-        # Запускаємо клієнта і чекаємо, поки він сам себе не закриє
         await asyncio.gather(
             client.start(settings.discord_token.get_secret_value()),
             client.wait_until_finished()
