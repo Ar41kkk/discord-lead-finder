@@ -3,6 +3,7 @@
 import streamlit as st
 import pandas as pd
 import time
+from config.settings import settings
 from ...db_utils import update_opportunity_status
 from config.settings import settings
 from sqlalchemy.engine import make_url
@@ -11,31 +12,26 @@ def display_view(df: pd.DataFrame):
     """Відображає режим сортування 'Колода'."""
 
     # отримуємо шлях до sqlite-файлу з налаштувань
-    url = make_url(settings.database.db_url)
-    if url.drivername != "sqlite":
-        raise RuntimeError("Підтримується лише sqlite для triage_views")
-    db_path = url.database
+    db_url = settings.database.db_url
 
     # Обробник однієї дії
     def handle_action(status: str, opp_id: int):
-        st.session_state.last_action = {
-            "id": opp_id,
-            "previous_status": "n/a",
-            "timestamp": time.time()
-        }
-        if update_opportunity_status(db_path, opp_id, status):
+        st.session_state.last_action = {"id": opp_id, "previous_status": "n/a", "timestamp": time.time()}
+        if update_opportunity_status(db_url, opp_id, status):
             st.toast(f"Лід #{opp_id} позначено як '{status}'!", icon="✅")
             st.cache_data.clear()
+            st.rerun()  # ← миттєве перезавантаження сторінки і повторне завантаження df
         else:
             st.toast(f"Помилка при оновленні ліда #{opp_id}.", icon="❌")
 
     # Скасування останньої дії
     def handle_undo():
         last = st.session_state.get("last_action")
-        if last and update_opportunity_status(db_path, last["id"], last["previous_status"]):
+        if last and update_opportunity_status(db_url, last["id"], last["previous_status"]):
             st.toast(f"Дію для ліда #{last['id']} скасовано.", icon="↩️")
             st.session_state.last_action = None
             st.cache_data.clear()
+            st.rerun()  # ← теж перерендер
         else:
             st.error("Не вдалося скасувати останню дію.")
 

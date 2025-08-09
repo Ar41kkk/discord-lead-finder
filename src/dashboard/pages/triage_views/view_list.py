@@ -1,6 +1,7 @@
 # src/dashboard/pages/triage_views/view_list.py
 
 import streamlit as st
+from config.settings import settings
 from ...db_utils import update_opportunities_status_bulk
 from config.settings import settings
 from sqlalchemy.engine import make_url
@@ -10,19 +11,17 @@ def display_view(df: pd.DataFrame):
     """Відображає режим сортування 'Список'."""
 
     # Шлях до SQLite з налаштувань
-    url = make_url(settings.database.db_url)
-    if url.drivername != "sqlite":
-        raise RuntimeError("Підтримується лише sqlite для triage_views")
-    db_path = url.database
+    db_url = settings.database.db_url
 
     # Обробник масової дії
     def handle_bulk_action(status: str, selected_ids: list[int]):
         if not selected_ids:
             st.warning("Ви не вибрали жодного ліда.")
             return
-        if update_opportunities_status_bulk(db_path, selected_ids, status):
+        if update_opportunities_status_bulk(db_url, selected_ids, status):
             st.toast(f"{len(selected_ids)} лідів позначено як '{status}'!", icon="✅")
             st.cache_data.clear()
+            st.rerun()  # ← оновлюємо одразу
         else:
             st.toast("Помилка при масовому оновленні.", icon="❌")
 

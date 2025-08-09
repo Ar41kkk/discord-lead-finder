@@ -1,0 +1,10 @@
+streamlit
+streamlit-autorefresh
+pandas
+sqlalchemy
+pydantic
+structlog
+tqdm
+redis
+discord.py-self==2.0.1
+# інші твої пакети...

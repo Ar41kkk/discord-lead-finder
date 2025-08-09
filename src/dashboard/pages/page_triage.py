@@ -3,55 +3,88 @@
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 from .triage_views import view_deck, view_list
-from ..constants import AI_QUALIFIED_STATUSES
+from ..constants import AI_QUALIFIED_STATUSES  # ← лишаємо тільки цю константу
+import pandas as pd
 
 def display_page(df):
-    """Головна сторінка для сортування, яка виступає в ролі роутера."""
+    """Головна сторінка для сортування, роутер між режимами, з фільтром Stage1/Stage2."""
 
-    # Автооновлення кожні 30 с
     st_autorefresh(interval=30_000, key="triage_reloader")
     st.header("📬 Сортування Нових Лідів", divider='rainbow')
 
     # Ініціалізуємо стан
     if 'triage_mode' not in st.session_state:
         st.session_state.triage_mode = "🗂️ Колода"
-    if 'show_only_qualified' not in st.session_state:
-        st.session_state.show_only_qualified = False
+    if 'triage_stage' not in st.session_state:
+        st.session_state.triage_stage = "Етап 2"
 
-    # Відфільтруємо нерозглянуті ліди
-    unreviewed_all = df[df['manual_status'] == 'n/a']
+    # Нерозглянуті (manual_status == 'n/a', нечутливо до регістру)
+    manual = df.get('manual_status', pd.Series(dtype=str)).astype(str).str.lower()
+    unreviewed_all = df[manual.eq('n/a')].copy()
 
-    st.toggle(
-        "Показувати лише якісні ліди (AI, Етап 2)",
-        key='show_only_qualified',
-        help="Показує лише ліди зі статусом RELEVANT або POSSIBLY_RELEVANT"
+    # Радіо-перемикач етапів
+    st.radio(
+        "Показувати ліди, що пройшли:",
+        ["Етап 1", "Етап 2"],
+        key="triage_stage",
+        horizontal=True
     )
 
-    if st.session_state.show_only_qualified:
-        unreviewed = unreviewed_all[
-            unreviewed_all['ai_stage_two_status'].isin(AI_QUALIFIED_STATUSES)
-        ]
+    # Маска для Stage 1: усе, що НЕ 'UNRELEVANT' (як у твоїй воронці)
+    if 'ai_stage_one_status' in unreviewed_all.columns:
+        s1_series = unreviewed_all['ai_stage_one_status'].astype(str).str.upper()
+        s1_mask = s1_series.ne('UNRELEVANT')
     else:
-        unreviewed = unreviewed_all
+        # Якщо колонки нема, підстрахуємось: вважати Stage1 пройденим якщо є keyword_trigger
+        s1_mask = unreviewed_all.get('keyword_trigger', pd.Series(index=unreviewed_all.index)).notna()
 
-    unreviewed = unreviewed.sort_values('message_timestamp', ascending=False)
+    # Маска для Stage 2: статус ∈ AI_QUALIFIED_STATUSES
+    if 'ai_stage_two_status' in unreviewed_all.columns:
+        s2_mask = unreviewed_all['ai_stage_two_status'].isin(AI_QUALIFIED_STATUSES)
+    else:
+        # Якщо колонки нема — Stage2 ніхто не пройшов
+        s2_mask = pd.Series(False, index=unreviewed_all.index)
 
-    # Якщо нічого не лишилося
+    # Застосовуємо вибір етапу
+    if st.session_state.triage_stage == "Етап 1":
+        unreviewed = unreviewed_all[s1_mask]
+    else:
+        unreviewed = unreviewed_all[s2_mask]
+
+    # --- Сортування: message_timestamp → created_at → id ---
+    sort_done = False
+    if 'message_timestamp' in unreviewed.columns:
+        ts = pd.to_datetime(unreviewed['message_timestamp'], errors='coerce', utc=True)
+        unreviewed = unreviewed.assign(_ts=ts).sort_values('_ts', ascending=False).drop(columns=['_ts'])
+        sort_done = True
+    elif 'created_at' in unreviewed.columns:
+        ts = pd.to_datetime(unreviewed['created_at'], errors='coerce', utc=True)
+        unreviewed = unreviewed.assign(_ts=ts).sort_values('_ts', ascending=False).drop(columns=['_ts'])
+        sort_done = True
+    elif 'id' in unreviewed.columns:
+        unreviewed = unreviewed.sort_values('id', ascending=False)
+        sort_done = True
+
+    if not sort_done:
+        st.warning("⚠️ Не знайдено колонок для сортування ('message_timestamp' / 'created_at' / 'id'). Показуємо як є.")
+
+    # Порожні стани
     if unreviewed.empty:
-        if st.session_state.show_only_qualified and not unreviewed_all.empty:
-            st.info("Не знайдено якісних лідів. Вимкніть фільтр.")
-        else:
-            st.success("🎉 Всі ліди відсортовано!")
+        st.info("За обраний етап немає нерозглянутих лідів.")
         return
 
-    # Прогрес
-    total   = len(df)
-    left    = len(unreviewed)
-    done    = total - len(unreviewed_all)
-    percent = (done / total) if total else 0
+    # Прогрес: total залежить від вибраного етапу
+    if st.session_state.triage_stage == "Етап 1":
+        total = len(unreviewed_all[s1_mask])
+    else:
+        total = len(unreviewed_all[s2_mask])
+
+    left = len(unreviewed)  # залишок у поточному етапі
+    done = max(0, total - left)
+    percent = (done / total) if total else 0.0
     st.progress(percent, text=f"Відсортовано {done} з {total} (залишилось {left})")
 
-    # Вибір режиму
+    # Режим відображення
     st.radio(
         "Режим сортування:",
         ["🗂️ Колода", "📋 Список"],
@@ -60,7 +93,7 @@ def display_page(df):
         label_visibility="collapsed"
     )
 
-    # Рендеримо відповідне view без передачі шляху до БД
+    # Рендер
     if st.session_state.triage_mode == "🗂️ Колода":
         view_deck.display_view(unreviewed)
     else:
